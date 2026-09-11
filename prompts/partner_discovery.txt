@@ -1,0 +1,70 @@
+Run a new AIKA Korean Partner/Reseller research batch.
+
+BATCH PARAMETERS
+
+- Batch ID: {batch_id}
+- Target Vendor to Match: {vendor_match}
+- Primary AI Category: {category}
+- Preferred Target Industries: {industries}
+- Maximum Final Candidates: {target_count}
+- Minimum Partner Fit Score: {minimum_confidence_score}
+- Research Date: {research_date}
+- Preferred Reference Sites (Prioritize searching these): {preferred_sources}
+- Maximum Search Candidates to Scan: {max_discovery_candidates}
+- Partner Scale Policy: {exclude_small_policy}
+
+PREVIOUSLY SELECTED OR EXCLUDED DOMAINS
+
+Do not return a company using any of these domains:
+
+{existing_domains}
+
+RESEARCH INSTRUCTIONS
+
+1. Use current Google Search results.
+2. Identify Korean partners, resellers, cloud MSPs (e.g. Megazone, Bespin, etc.), SIs, and distributors.
+3. If "Target Vendor to Match" is specified, search for:
+   - "{vendor_match} 한국 파트너" (e.g., Pinecone Korean partner)
+   - "{vendor_match} 국내 총판"
+   - "{vendor_match} 리셀러 구축사"
+   - Verify that the company actually represents, resells, or has a confirmed case study/reference implementing {vendor_match}.
+4. If "Target Vendor to Match" is not specified (e.g., "All" or category general search), search generally for leading Korean AI partner/reseller/distributor/MSP companies that represent global AI vendors in the category "{category}".
+5. Verify every final company through its official website.
+6. Calculate a Partner Fit Score (70 to 100) based on:
+   - Partnership level (Official distributor/Tier-1 partner = 40, Official reseller = 30, Unofficial/technical partnership = 20)
+   - References / Case Studies (Verified large customer implementation = 30, General implementation = 20, No case study = 10)
+   - AI & Cloud Capability (Dedicated AI team/MSP/SI = 20, General IT distributor = 10)
+   - Technical Support Level (Tech support center/education = 10, Simple contact page = 5)
+7. Write the "Company Summary" and "Korea Market Relevance" in clear professional English that can be translated naturally into Korean.
+8. Set the "Headquarters Country" to "South Korea" for all domestic partners.
+9. Return no more than {target_count} qualified final companies.
+
+For each final company, provide:
+
+- Company Name (Korean Partner Name)
+- Official Website
+- Normalized Domain
+- Headquarters Country (South Korea)
+- Main AI Product (The matched Global Vendor's name and product distributed/resold, e.g. "Pinecone Vector Database")
+- Primary AI Category
+- Secondary AI Categories
+- Company Summary
+- Target Customers
+- Target Industries
+- Main Use Cases
+- Deployment Type
+- Official Product Page
+- Official About Page
+- Official Contact Page
+- Korea Presence Found (Yes)
+- Potential Korean Partner Type (e.g. "Official Distributor", "Tier-1 Partner", "SI Builder", "MSP")
+- Korea Market Relevance (Describe their partnership scale and influence in the Korean market)
+- B2B Product Confirmed (Yes)
+- Proprietary Product Confirmed (Yes)
+- Confidence Score (The Partner Fit Score, 70 to 100)
+- AIKA Recommendation (Strong Partner | Partner)
+- Primary Evidence URL (URL confirming the partnership, e.g., partner directory or PR article)
+- Additional Source URLs
+- Review Status (New)
+- Processing Status (Completed)
+- Research Notes (Explain the calculation of the Partner Fit Score and references)

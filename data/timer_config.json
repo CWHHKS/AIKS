@@ -1,0 +1,34 @@
+{
+  "vendor": {
+    "enabled": true,
+    "mode": "interval",
+    "interval_hours": 6,
+    "daily_time": "09:00",
+    "target_count": 5,
+    "category": "All",
+    "region": "Global",
+    "last_run": "2026-09-10 10:44:09",
+    "last_status": "Success (5 saved)"
+  },
+  "partner": {
+    "enabled": true,
+    "mode": "interval",
+    "interval_hours": 2,
+    "daily_time": "09:00",
+    "target_count": 5,
+    "category": "All",
+    "last_run": "2026-09-10 14:48:10",
+    "last_status": "Success (5 saved)"
+  },
+  "news": {
+    "enabled": true,
+    "mode": "interval",
+    "interval_hours": 6,
+    "daily_time": "08:00",
+    "target_count": 5,
+    "primary_category": "All",
+    "news_topic": "All",
+    "last_run": "2026-09-10 10:44:41",
+    "last_status": "Success (5 saved)"
+  }
+}

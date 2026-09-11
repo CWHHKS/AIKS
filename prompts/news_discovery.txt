@@ -1,0 +1,66 @@
+Search for the latest AI news and industry intelligence articles based on the given parameters.
+
+BATCH PARAMETERS
+
+- Batch ID: {batch_id}
+- Primary AI Category: {primary_category}
+- News Topic: {news_topic}
+- Search Language Preference: {language}
+- Target Article Count: {target_count}
+- Research Date: {research_date}
+- Preferred Reference Sites (search these first): {preferred_sources}
+
+PREVIOUSLY COLLECTED URLs (Do NOT return articles with these URLs):
+
+{existing_urls}
+
+RESEARCH INSTRUCTIONS
+
+1. Use current Google Search results to find the most recent, relevant AI news articles.
+2. Search for articles published within the last 30 days unless specified otherwise.
+3. If a "Primary AI Category" is specified, focus on articles about that domain.
+4. If a "News Topic" is specified (e.g., "AI Investment & M&A"), prioritize articles matching that topic.
+5. Search across both English and Korean sources. Prioritize the "Preferred Reference Sites" if provided.
+6. For each article, verify the source URL is valid and accessible.
+7. Determine "Korea Market Relevance":
+   - High: Directly involves Korean companies, Korean government AI policy, or has significant Korea market impact
+   - Medium: Global trend that is relevant to Korean AI market
+   - Low: General global AI news with minimal direct Korea relevance
+8. Generate a concise 1-line Korean summary ("Korean Summary") in 1-2 sentences for quick scanning.
+9. Generate a comprehensive 10-line detailed summary ("Detailed 10-Line Summary") written in Korean with 10 structured bullet points covering: background, key facts, tech specs, key companies/people, business impact, Korea market implications, and takeaways.
+10. CRITICAL TRANSLATION REQUIREMENT: If an article is in English, always provide a clear, natural Korean translation of the article title ("Korean Title"). If the article is already in Korean, set Korean Title to the same as Title.
+11. Return no more than {target_count} articles.
+12. Do NOT return duplicate URLs or articles already in the existing URL list.
+
+NEWS TOPIC OPTIONS (use exactly one):
+- AI Investment & M&A
+- AI Policy & Regulation
+- Korea AI Market
+- Big Tech AI
+- AI Research & Breakthroughs
+- AI Product Launch
+- AI Industry Trends
+- Other News
+
+For each article, provide:
+
+### Article [N]
+
+- Title: (original article title)
+- Korean Title: (Korean translation of the title if in English, otherwise same as original title)
+- Source Media: (publication name, e.g. TechCrunch, ZDNet Korea, etnews)
+- Source URL: (direct link to article)
+- Published Date: (YYYY-MM-DD format, estimate if not shown)
+- Language: (EN or KO)
+- Primary AI Category: (one of the allowed AI categories)
+- News Topic: (one of the 8 news topics above)
+- Related Companies: (company names mentioned, comma-separated)
+- Korean Summary: (1-2 sentence quick summary in Korean)
+- Detailed 10-Line Summary: (10 structured bullet points in Korean detailing the complete news breakdown)
+- Key Keywords: (5-7 keywords in Korean, comma-separated)
+- Korea Market Relevance: (High / Medium / Low)
+- Research Notes: (brief explanation of why this article was selected and its significance, written in Korean)
+
+Separate each article with ---
+
+

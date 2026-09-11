@@ -1,0 +1,68 @@
+Run a new AIKA global AI vendor research batch.
+
+BATCH PARAMETERS
+
+- Batch ID: {batch_id}
+- Target Country or Region: {region}
+- Primary AI Category: {category}
+- Preferred Target Industries: {industries}
+- Maximum Final Candidates: {target_count}
+- Minimum Confidence Score: {minimum_confidence_score}
+- Major Hyperscale Vendors: {hyperscale_policy}
+- Companies with Existing Korean Presence: {korea_presence_policy}
+- Research Date: {research_date}
+- Preferred Reference Sites (Prioritize searching these): {preferred_sources}
+
+PREVIOUSLY SELECTED OR EXCLUDED DOMAINS
+
+Do not return a company using any of these domains:
+
+{existing_domains}
+
+RESEARCH INSTRUCTIONS
+
+1. Use current Google Search results.
+2. Identify more candidates than the final requested count when needed.
+3. Verify every final company through its official website.
+4. Find at least one official product or solution page.
+5. Include only proprietary B2B AI software vendors.
+6. Remove duplicate and previously selected domains.
+7. Return no more than {target_count} qualified final companies.
+8. Return fewer than {target_count} when sufficient evidence is unavailable.
+9. Do not include weak candidates merely to reach {target_count}.
+10. Write all summaries in clear professional English that can be
+    translated naturally into Korean.
+11. Include full source URLs.
+12. Clearly distinguish official website evidence from external sources.
+
+For each final company, provide:
+
+- Company Name
+- Official Website
+- Normalized Domain
+- Headquarters Country
+- Main AI Product
+- Primary AI Category
+- Secondary AI Categories
+- Company Summary
+- Target Customers
+- Target Industries
+- Main Use Cases
+- Deployment Type
+- Official Product Page
+- Official About Page
+- Official Contact Page
+- Korea Presence Found
+- Potential Korean Partner Type
+- Korea Market Relevance
+- B2B Product Confirmed
+- Proprietary Product Confirmed
+- Confidence Score
+- AIKA Recommendation
+- Primary Evidence URL
+- Additional Source URLs
+- Research Notes
+
+Do not claim that the results have been stored in Google Sheets.
+The application will display, validate, and store the results only
+after the user reviews and selects the companies.

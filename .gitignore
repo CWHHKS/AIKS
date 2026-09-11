@@ -1,0 +1,31 @@
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# Python Cache & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Sensitive Credentials & Secrets (절대 커밋/푸시 금지)
+.env
+.env.*
+!.env.template
+service_account.json
+*.pem
+*.key
+
+# Runtime data caches and backups
+data/batch_cache/
+data/local_backup/
+*.log
+
+# Operating System & IDE files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

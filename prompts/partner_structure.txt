@@ -1,0 +1,57 @@
+Convert the supplied AIKA Korean Partner/Reseller research result into valid JSON.
+
+Use only information contained in the supplied research result.
+
+Do not perform new web searches.
+Do not add, infer, or invent information.
+Do not include explanations outside the JSON.
+Return no more than {target_count} candidates.
+Exclude candidates with a partner fit score below 70.
+
+Use this top-level structure:
+
+{
+  "batch_id": "string",
+  "requested_count": {target_count},
+  "verified_count": 0,
+  "candidates": []
+}
+
+Each candidate must contain:
+
+{
+  "company_name": "string",
+  "official_website": "string",
+  "normalized_domain": "string",
+  "headquarters_country": "South Korea",
+  "main_ai_product": "string or null",
+  "primary_ai_category": "allowed category",
+  "secondary_ai_categories": [],
+  "company_summary": "string",
+  "target_customers": [],
+  "target_industries": [],
+  "main_use_cases": [],
+  "deployment_type": [],
+  "official_product_page": "string or null",
+  "official_about_page": "string or null",
+  "official_contact_page": "string or null",
+  "korea_presence_found": "Yes",
+  "potential_korean_partner_type": [],
+  "korea_market_relevance": "string",
+  "b2b_product_confirmed": "Yes",
+  "proprietary_product_confirmed": "Yes",
+  "confidence_score": 0,
+  "aika_recommendation": "Strong Partner | Partner",
+  "primary_evidence_url": "string",
+  "additional_source_urls": [],
+  "review_status": "New",
+  "processing_status": "Completed",
+  "research_notes": "string or null"
+}
+
+Separate multiple values as JSON arrays.
+Use null for unavailable single-value fields.
+Use an empty array for unavailable multiple-value fields.
+
+CRITICAL FORMATTING FOR SPREADSHEETS:
+For "company_summary" and "korea_market_relevance", format the text with logical line breaks (using \n) to separate key points into short, highly readable paragraphs (e.g. max 2-3 sentences per paragraph, or bullet points separated by \n). This is required for visual formatting in sheets.
