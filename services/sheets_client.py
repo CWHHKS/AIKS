@@ -19,17 +19,18 @@ def _get_setting(key: str, default: Optional[str] = None) -> Optional[str]:
     """Retrieve setting from os.environ first, then streamlit.secrets if available."""
     val = os.getenv(key)
     if val:
-        return val
+        return str(val).strip()
     try:
         import streamlit as st
         if key in st.secrets:
-            return str(st.secrets[key])
+            return str(st.secrets[key]).strip()
     except Exception:
         pass
     return default
 
 class SheetsClient:
     def __init__(self):
+        self.last_error = None
         self.spreadsheet_id = _get_setting("GOOGLE_SPREADSHEET_ID")
         self.partner_spreadsheet_id = _get_setting("KOREAN_PARTNERS_SPREADSHEET_ID")
         self.news_spreadsheet_id = _get_setting("NEWS_SPREADSHEET_ID")
@@ -57,7 +58,8 @@ class SheetsClient:
           3. Environment variable GCP_SERVICE_ACCOUNT_JSON
         """
         if not self.spreadsheet_id:
-            logger.warning("GOOGLE_SPREADSHEET_ID is not configured in environment or secrets.")
+            self.last_error = "GOOGLE_SPREADSHEET_ID is not configured in environment or secrets."
+            logger.warning(self.last_error)
             return
 
         creds = None
@@ -75,10 +77,14 @@ class SheetsClient:
                 import streamlit as st
                 if "gcp_service_account" in st.secrets:
                     sa_info = dict(st.secrets["gcp_service_account"])
+                    if "private_key" in sa_info and isinstance(sa_info["private_key"], str):
+                        # Fix escaped newlines if present
+                        sa_info["private_key"] = sa_info["private_key"].replace("\\n", "\n")
                     creds = Credentials.from_service_account_info(sa_info, scopes=SCOPES)
                     logger.info("Loaded Google credentials from st.secrets['gcp_service_account']")
             except Exception as e:
-                logger.debug(f"st.secrets lookup failed: {e}")
+                self.last_error = f"Secrets auth error: {e}"
+                logger.error(self.last_error)
 
         # 3. GCP_SERVICE_ACCOUNT_JSON environment variable
         if not creds:
@@ -86,13 +92,18 @@ class SheetsClient:
             if env_sa:
                 try:
                     sa_info = json.loads(env_sa)
+                    if "private_key" in sa_info and isinstance(sa_info["private_key"], str):
+                        sa_info["private_key"] = sa_info["private_key"].replace("\\n", "\n")
                     creds = Credentials.from_service_account_info(sa_info, scopes=SCOPES)
                     logger.info("Loaded Google credentials from GCP_SERVICE_ACCOUNT_JSON env var")
                 except Exception as e:
-                    logger.warning(f"Failed to load credentials from GCP_SERVICE_ACCOUNT_JSON: {e}")
+                    self.last_error = f"Env auth error: {e}"
+                    logger.warning(self.last_error)
 
         if not creds:
-            logger.warning("No valid Google service account credentials found (checked file, st.secrets, and env).")
+            if not self.last_error:
+                self.last_error = "No Google service account found in [gcp_service_account] secrets."
+            logger.warning(self.last_error)
             return
 
         try:
@@ -109,8 +120,10 @@ class SheetsClient:
             if self.news_spreadsheet_id:
                 self.news_spreadsheet = self.client.open_by_key(self.news_spreadsheet_id)
                 logger.info("Connected to News Intelligence spreadsheet.")
+            self.last_error = None
         except Exception as e:
-            logger.error(f"Failed to connect to Google Sheets: {str(e)}")
+            self.last_error = f"Sheets connection error: {str(e)}"
+            logger.error(self.last_error)
             self.client = None
             self.spreadsheet = None
             self.partner_spreadsheet = None

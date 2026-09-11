@@ -275,14 +275,19 @@ with st.sidebar:
         st.caption("<small>🟢: 자동 예약 수집 작동 중 | ⚪: 비활성</small>", unsafe_allow_html=True)
     else:
         st.error("Google Sheets Disconnected")
+        if hasattr(st.session_state.sheets, "last_error") and st.session_state.sheets.last_error:
+            st.caption(f"⚠️ `{st.session_state.sheets.last_error}`")
 
     # 3. Google Sheets Quick Links
     st.markdown("<hr style='margin: 8px 0;'>", unsafe_allow_html=True)
     st.markdown("##### 🔗 구글 시트 바로가기")
     
-    v_sheet_id = os.getenv("GOOGLE_SPREADSHEET_ID", "")
-    p_sheet_id = os.getenv("KOREAN_PARTNERS_SPREADSHEET_ID", "")
-    n_sheet_id = os.getenv("NEWS_SPREADSHEET_ID", "")
+    def _get_link_id(k):
+        return os.getenv(k) or (st.secrets.get(k, "") if hasattr(st, "secrets") else "")
+
+    v_sheet_id = _get_link_id("GOOGLE_SPREADSHEET_ID")
+    p_sheet_id = _get_link_id("KOREAN_PARTNERS_SPREADSHEET_ID")
+    n_sheet_id = _get_link_id("NEWS_SPREADSHEET_ID")
 
     v_sheet_url = f"https://docs.google.com/spreadsheets/d/{v_sheet_id}" if v_sheet_id else "#"
     p_sheet_url = f"https://docs.google.com/spreadsheets/d/{p_sheet_id}" if p_sheet_id else "#"
