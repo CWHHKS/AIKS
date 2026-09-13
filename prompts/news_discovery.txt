@@ -21,7 +21,10 @@ RESEARCH INSTRUCTIONS
 3. If a "Primary AI Category" is specified, focus on articles about that domain.
 4. If a "News Topic" is specified (e.g., "AI Investment & M&A"), prioritize articles matching that topic.
 5. Search across both English and Korean sources. Prioritize the "Preferred Reference Sites" if provided.
-6. For each article, verify the source URL is valid and accessible.
+6. CRITICAL URL INTEGRITY:
+   - Provide the EXACT, LIVE, DIRECT article URL discovered through Google Search.
+   - NEVER fabricate, guess, shorten, or invent URL paths.
+   - The URL must point directly to the individual article page.
 7. Determine "Korea Market Relevance":
    - High: Directly involves Korean companies, Korean government AI policy, or has significant Korea market impact
    - Medium: Global trend that is relevant to Korean AI market

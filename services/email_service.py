@@ -61,6 +61,25 @@ class EmailService:
         if keywords:
             keywords_html = f"<div style='margin-top: 8px; font-size: 11px; color: #64748b;'>🏷️ <b>키워드:</b> {keywords}</div>"
 
+        # URL & Search fallback handling
+        import urllib.parse
+        search_query = f"{orig_title or title} {media}"
+        google_search_url = f"https://www.google.com/search?q={urllib.parse.quote(search_query)}"
+        
+        raw_url = str(url or "").strip()
+        is_generic_domain = False
+        if raw_url.startswith("http://") or raw_url.startswith("https://"):
+            try:
+                parsed = urllib.parse.urlparse(raw_url)
+                if not parsed.path or parsed.path in ["", "/"]:
+                    is_generic_domain = True
+            except Exception:
+                is_generic_domain = True
+        else:
+            is_generic_domain = True
+
+        target_url = google_search_url if (is_generic_domain or not raw_url or raw_url == "#") else raw_url
+
         return f"""
         <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px 18px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04);">
             <div style="display: flex; align-items: center; margin-bottom: 8px; flex-wrap: wrap;">
@@ -70,7 +89,7 @@ class EmailService:
                 <span style="margin-left: auto; font-size: 12px; color: #94a3b8; font-weight: 500;">{media} • {pub_date}</span>
             </div>
             
-            <a href="{url}" target="_blank" style="text-decoration: none; color: #0f172a; font-size: 16px; font-weight: 700; line-height: 1.4; display: block;">
+            <a href="{target_url}" target="_blank" style="text-decoration: none; color: #0f172a; font-size: 16px; font-weight: 700; line-height: 1.4; display: block;">
                 {title}
             </a>
             {orig_title_html}
@@ -82,8 +101,11 @@ class EmailService:
             {detailed_html}
             {keywords_html}
 
-            <div style="margin-top: 12px; text-align: right;">
-                <a href="{url}" target="_blank" style="display: inline-block; background-color: #f1f5f9; color: #0f172a; border: 1px solid #cbd5e1; padding: 5px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; text-decoration: none;">
+            <div style="margin-top: 12px; display: flex; justify-content: flex-end; align-items: center; gap: 8px;">
+                <a href="{google_search_url}" target="_blank" style="display: inline-block; background-color: #f8fafc; color: #64748b; border: 1px solid #e2e8f0; padding: 5px 10px; border-radius: 6px; font-size: 11.5px; font-weight: 500; text-decoration: none;">
+                    🔍 포털 검색
+                </a>
+                <a href="{target_url}" target="_blank" style="display: inline-block; background-color: #f1f5f9; color: #0f172a; border: 1px solid #cbd5e1; padding: 5px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; text-decoration: none;">
                     원문 기사 보기 →
                 </a>
             </div>

@@ -374,9 +374,18 @@ For "company_summary" and "korea_market_relevance", format the text with logical
         )
         
         search_tool = glm.Tool(google_search={})
+        news_system_prompt = (
+            "You are a professional AI industry journalist and news intelligence analyst for AIKA (AI Korea Access).\n"
+            "Your objective is to find, verify, and summarize the latest high-impact AI technology and business news.\n\n"
+            "CRITICAL INSTRUCTIONS:\n"
+            "1. Ground all findings in real Google Search results.\n"
+            "2. SOURCE URL INTEGRITY: You MUST provide the exact, live, full article URL from search results. NEVER invent, guess, or hallucinate URLs.\n"
+            "3. If an article is in English, always provide an accurate, natural Korean title translation alongside the original title.\n"
+            "4. Provide high-quality Korean summaries and structured 10-line breakdown bullet points."
+        )
         model = genai.GenerativeModel(
             model_name=self.discovery_model_name,
-            system_instruction=self.system_prompt,
+            system_instruction=news_system_prompt,
             tools=[search_tool]
         )
         
