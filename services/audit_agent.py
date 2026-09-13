@@ -5,9 +5,21 @@ from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-load_dotenv(os.path.join(BASE_DIR, ".env"))
+load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 
 logger = logging.getLogger(__name__)
+
+def _get_api_key(key: str) -> Optional[str]:
+    val = os.getenv(key)
+    if val:
+        return val
+    try:
+        import streamlit as st
+        if key in st.secrets:
+            return str(st.secrets[key])
+    except Exception:
+        pass
+    return None
 
 class GPTNewsAuditor:
     """
@@ -17,8 +29,8 @@ class GPTNewsAuditor:
     2. Semantic Fact Matching (Validates presence of Headline Entities, Event, Amounts).
     """
     def __init__(self):
-        self.api_key = os.getenv("OPENAI_API_KEY")
-        self.model_name = os.getenv("GPT_AUDIT_MODEL", "gpt-4o-mini")
+        self.api_key = _get_api_key("OPENAI_API_KEY")
+        self.model_name = _get_api_key("GPT_AUDIT_MODEL") or "gpt-4o-mini"
         self.client = None
         
         if self.api_key:
