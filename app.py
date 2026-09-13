@@ -170,6 +170,54 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# ----------------- AUTHENTICATION MODULE -----------------
+def check_authentication():
+    """Renders login form and blocks access until authenticated."""
+    if st.session_state.get("authenticated", False):
+        return True
+
+    # Hide sidebar during login screen
+    st.markdown("""
+        <style>
+            [data-testid="stSidebar"] { display: none; }
+        </style>
+    """, unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        st.markdown("<h2 style='text-align: center; color: #1A365D;'>🤖 AIKA Platform Access</h2>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: center; color: #4A5568;'>보안 로그인이 필요합니다. 계정 정보를 입력하세요.</p>", unsafe_allow_html=True)
+        
+        with st.form("login_form", clear_on_submit=False):
+            username = st.text_input("아이디 (ID)", key="input_username")
+            password = st.text_input("비밀번호 (Password)", type="password", key="input_password")
+            submit = st.form_submit_button("🔑 로그인 (Login)", use_container_width=True)
+
+            if submit:
+                target_user = os.getenv("APP_USERNAME", "aika")
+                target_pass = os.getenv("APP_PASSWORD", "$aSmith2115$")
+                
+                # Check secrets if available
+                try:
+                    if "APP_USERNAME" in st.secrets:
+                        target_user = str(st.secrets["APP_USERNAME"])
+                    if "APP_PASSWORD" in st.secrets:
+                        target_pass = str(st.secrets["APP_PASSWORD"])
+                except Exception:
+                    pass
+
+                if username.strip() == target_user and password.strip() == target_pass:
+                    st.session_state["authenticated"] = True
+                    st.success("✅ 로그인되었습니다!")
+                    st.rerun()
+                else:
+                    st.error("❌ 아이디 또는 비밀번호가 올바르지 않습니다.")
+
+    st.stop()
+
+check_authentication()
+
 # ----------------- SESSION STATE SETUP -----------------
 if "gemini" not in st.session_state:
     try:
@@ -307,6 +355,10 @@ with st.sidebar:
     st.markdown("<hr style='margin: 8px 0;'>", unsafe_allow_html=True)
     if st.button("🔄 Refresh Connections", use_container_width=True):
         refresh_connections()
+        st.rerun()
+
+    if st.button("🔒 로그아웃 (Logout)", use_container_width=True):
+        st.session_state["authenticated"] = False
         st.rerun()
 
 
