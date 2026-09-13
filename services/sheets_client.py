@@ -31,9 +31,9 @@ def _get_setting(key: str, default: Optional[str] = None) -> Optional[str]:
 class SheetsClient:
     def __init__(self):
         self.last_error = None
-        self.spreadsheet_id = _get_setting("GOOGLE_SPREADSHEET_ID")
+        self.spreadsheet_id = _get_setting("GOOGLE_SPREADSHEET_ID") or _get_setting("SPREADSHEET_KEY") or _get_setting("SPREADSHEET_ID")
         self.partner_spreadsheet_id = _get_setting("KOREAN_PARTNERS_SPREADSHEET_ID")
-        self.news_spreadsheet_id = _get_setting("NEWS_SPREADSHEET_ID")
+        self.news_spreadsheet_id = _get_setting("NEWS_SPREADSHEET_ID") or self.spreadsheet_id
         self.key_filepath = os.path.join(os.getcwd(), "service_account.json")
         self.client = None
         self.spreadsheet = None
@@ -55,10 +55,10 @@ class SheetsClient:
         Priority:
           1. Local service_account.json file
           2. Streamlit Secrets (st.secrets["gcp_service_account"])
-          3. Environment variable GCP_SERVICE_ACCOUNT_JSON
+          3. Environment variable GCP_SERVICE_ACCOUNT_JSON / GOOGLE_APPLICATION_CREDENTIALS_JSON
         """
         if not self.spreadsheet_id:
-            self.last_error = "GOOGLE_SPREADSHEET_ID is not configured in environment or secrets."
+            self.last_error = "GOOGLE_SPREADSHEET_ID / SPREADSHEET_KEY is not configured in environment or secrets."
             logger.warning(self.last_error)
             return
 
@@ -86,16 +86,16 @@ class SheetsClient:
                 self.last_error = f"Secrets auth error: {e}"
                 logger.error(self.last_error)
 
-        # 3. GCP_SERVICE_ACCOUNT_JSON environment variable
+        # 3. GCP_SERVICE_ACCOUNT_JSON / GOOGLE_APPLICATION_CREDENTIALS_JSON environment variable
         if not creds:
-            env_sa = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
+            env_sa = os.getenv("GCP_SERVICE_ACCOUNT_JSON") or os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON") or os.getenv("GOOGLE_CREDENTIALS")
             if env_sa:
                 try:
                     sa_info = json.loads(env_sa)
                     if "private_key" in sa_info and isinstance(sa_info["private_key"], str):
                         sa_info["private_key"] = sa_info["private_key"].replace("\\n", "\n")
                     creds = Credentials.from_service_account_info(sa_info, scopes=SCOPES)
-                    logger.info("Loaded Google credentials from GCP_SERVICE_ACCOUNT_JSON env var")
+                    logger.info("Loaded Google credentials from environment variable")
                 except Exception as e:
                     self.last_error = f"Env auth error: {e}"
                     logger.warning(self.last_error)

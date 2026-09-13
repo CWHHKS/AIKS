@@ -35,8 +35,8 @@ class GeminiClient:
         genai.configure(api_key=self.api_key)
         
         # Model configurations
-        self.discovery_model_name = _get_gemini_setting("DISCOVERY_MODEL", "gemini-2.0-flash")
-        self.structure_model_name = _get_gemini_setting("STRUCTURE_MODEL", "gemini-2.0-flash")
+        self.discovery_model_name = _get_gemini_setting("DISCOVERY_MODEL", "gemini-2.5-flash")
+        self.structure_model_name = _get_gemini_setting("STRUCTURE_MODEL", "gemini-2.5-flash")
         
         # Load prompt files
         self.system_prompt = self._load_prompt("prompts/vendor_discovery_system.txt")
