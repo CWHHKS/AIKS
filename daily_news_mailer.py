@@ -77,52 +77,18 @@ def collect_news(target_count: int = 5, time_label: str = "Evening") -> List[Dic
     structured = gemini.run_news_structuring_stage(batch_id, report, target_count)
     raw_news = structured.get("candidates", [])
 
+    from services.url_resolver import resolve_exact_news_url, is_valid_deep_link
+
     valid = []
-    import urllib.parse
     for a in raw_news:
         url = (a.get("source_url") or "").strip()
-        is_invalid = False
-        if not url or url.lower() in ["none", "#", "null"]:
-            is_invalid = True
-        elif url.startswith("http://") or url.startswith("https://"):
-            try:
-                p = urllib.parse.urlparse(url)
-                if not p.path or p.path in ["", "/"]:
-                    is_invalid = True
-            except Exception:
-                is_invalid = True
-        else:
-            is_invalid = True
+        title_q = a.get("title") or a.get("korean_title") or "AI News"
+        media_q = a.get("source_media", "")
 
-        if is_invalid:
-            title_q = a.get("title") or a.get("korean_title") or "AI News"
-            media_q = a.get("source_media", "")
-            q_str = f"{title_q} {media_q}".strip()
-
-            # Attempt live search resolution for direct deep link
-            resolved_deep_link = None
-            try:
-                from duckduckgo_search import DDGS
-                ddg = DDGS()
-                results = list(ddg.text(q_str, max_results=5))
-                headers_chk = {"User-Agent": "Mozilla/5.0"}
-                import requests
-                for res in results:
-                    href = res.get("href", "")
-                    if href and (href.startswith("http://") or href.startswith("https://")):
-                        try:
-                            r_chk = requests.get(href, headers=headers_chk, timeout=4, allow_redirects=True, stream=True)
-                            all_u = [r_chk.url.lower()] + [h.url.lower() for h in r_chk.history]
-                            if r_chk.status_code == 200 and not any(err in u for u in all_u for err in ["/error", "404", "notfound"]):
-                                resolved_deep_link = r_chk.url
-                                break
-                        except Exception:
-                            continue
-            except Exception:
-                pass
-
-            url = resolved_deep_link or f"https://www.google.com/search?q={urllib.parse.quote(q_str)}"
-            a["source_url"] = url
+        # Always resolve and ensure exact direct article deep-link
+        exact_url = resolve_exact_news_url(title_q, media_q, url)
+        a["source_url"] = exact_url
+        url = exact_url
 
         if url and url.lower() in [u.lower() for u in existing_urls]:
             continue

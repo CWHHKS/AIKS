@@ -383,20 +383,20 @@ For "company_summary" and "korea_market_relevance", format the text with logical
             "3. If an article is in English, always provide an accurate, natural Korean title translation alongside the original title.\n"
             "4. Provide high-quality Korean summaries and structured 10-line breakdown bullet points."
         )
-        model = genai.GenerativeModel(
-            model_name=self.discovery_model_name,
-            system_instruction=news_system_prompt,
-            tools=[search_tool]
-        )
         
-        response = model.generate_content(user_prompt)
-        
-        if not response.text:
-            raise ValueError("Stage 1 received an empty response from Gemini API for news.")
-
-        # Extract verified grounding metadata URIs directly from Google Search engine
         real_grounding_urls = []
         try:
+            model = genai.GenerativeModel(
+                model_name=self.discovery_model_name,
+                system_instruction=news_system_prompt,
+                tools=[search_tool]
+            )
+            response = model.generate_content(user_prompt)
+            if not response.text:
+                raise ValueError("Stage 1 received an empty response from Gemini API for news.")
+            raw_text = response.text
+
+            # Extract verified grounding metadata URIs directly from Google Search engine
             if response.candidates and hasattr(response.candidates[0], "grounding_metadata"):
                 gm = response.candidates[0].grounding_metadata
                 if hasattr(gm, "grounding_chunks") and gm.grounding_chunks:
@@ -408,12 +408,30 @@ For "company_summary" and "korea_market_relevance", format the text with logical
                             })
                 logger.info(f"Extracted {len(real_grounding_urls)} verified real URIs from Gemini Search grounding_metadata.")
         except Exception as e:
-            logger.warning(f"Could not extract grounding_metadata: {e}")
-            
+            logger.warning(f"⚠️ [LLM FAILOVER TRIGGERED] Gemini Discovery API Exception: {e}. Falling back to OpenAI GPT Collector...")
+            raw_text = self._fallback_openai_discovery(user_prompt, news_system_prompt)
+
         logger.info("Stage 1 News Discovery completed successfully.")
         # Store real grounding URLs on the instance for stage 2 mapping
         self._last_grounding_urls = real_grounding_urls
-        return response.text
+        return raw_text
+
+    def _fallback_openai_discovery(self, user_prompt: str, news_system_prompt: str) -> str:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError("Gemini API failed and OPENAI_API_KEY is not set.")
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+        logger.info("Running News Discovery via Fallback OpenAI GPT Collector (gpt-4o-mini)...")
+        response = client.chat.completions.create(
+            model=os.getenv("GPT_AUDIT_MODEL", "gpt-4o-mini"),
+            messages=[
+                {"role": "system", "content": news_system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.3
+        )
+        return response.choices[0].message.content
 
     def run_news_structuring_stage(self, batch_id: str, discovery_report: str, target_count: int = 5) -> Dict[str, Any]:
         """
@@ -495,8 +513,6 @@ Use this JSON structure:
   "review_status": "New",
   "research_notes": "Korean notes or null"
 }
-
-
 """
 
         parsed_articles = []
@@ -523,8 +539,27 @@ Use this JSON structure:
                     elif isinstance(cand_data, dict):
                         parsed_articles.append(cand_data)
             except Exception as e:
-                logger.error(f"Failed to structure news article {i+1}: {str(e)}")
-                continue
+                logger.warning(f"Gemini Structuring failed for article {i+1}: {e}. Falling back to GPT-4o-mini...")
+                try:
+                    api_key = os.getenv("OPENAI_API_KEY")
+                    if api_key:
+                        from openai import OpenAI
+                        client = OpenAI(api_key=api_key)
+                        res = client.chat.completions.create(
+                            model=os.getenv("GPT_AUDIT_MODEL", "gpt-4o-mini"),
+                            response_format={"type": "json_object"},
+                            messages=[
+                                {"role": "system", "content": "You are a JSON structuring assistant."},
+                                {"role": "user", "content": user_prompt}
+                            ],
+                            temperature=0.0
+                        )
+                        cand_data = json.loads(res.choices[0].message.content)
+                        if isinstance(cand_data, dict):
+                            parsed_articles.append(cand_data)
+                except Exception as fallback_err:
+                    logger.error(f"Failed both Gemini & GPT structuring for article {i+1}: {fallback_err}")
+                    continue
 
         # -----------------------------------------------------------------
         # Step C: Override source_url with ground-truth URLs extracted in
@@ -559,13 +594,10 @@ Use this JSON structure:
                 chosen_url = last_grounding[i].get("uri", "")
                 logger.info(f"Article [{i+1}] mapped URL from grounding_metadata: {chosen_url}")
 
-            # If still invalid, generate a 100% working Google Search URL
-            if not chosen_url or chosen_url.lower() in ["none", "#", "null"]:
-                title_for_query = article.get("title") or article.get("korean_title") or "AI News"
-                media_for_query = article.get("source_media", "")
-                query_str = f"{title_for_query} {media_for_query}".strip()
-                chosen_url = f"https://www.google.com/search?q={urllib.parse.quote(query_str)}"
-                logger.info(f"Article [{i+1}] generated Google Search fallback URL: {chosen_url}")
+            # Direct site URL integrity enforcement: Never output search query URLs (google.com/search)
+            if not chosen_url or chosen_url.lower() in ["none", "#", "null"] or "google.com/search" in chosen_url.lower():
+                chosen_url = ""
+                logger.info(f"Article [{i+1}] direct site URL pending resolution by URL Resolver.")
 
             article["source_url"] = chosen_url
             final_articles.append(article)

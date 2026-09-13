@@ -57,27 +57,10 @@ def is_url_valid(url: str) -> bool:
 
     return False
 
+from services.url_resolver import resolve_exact_news_url, is_valid_deep_link
+
 def get_best_url(title: str, media: str, current_url: str, gemini_client: GeminiClient) -> str:
-    if is_url_valid(current_url):
-        return current_url
-
-    cleaned = clean_title(title)
-    query_str = f"{cleaned} {media}".strip()
-
-    # Search web for the exact direct article deep-link
-    try:
-        ddg = DDGS()
-        results = list(ddg.text(query_str, max_results=6))
-        for res in results:
-            href = res.get("href", "")
-            if href and is_url_valid(href):
-                logger.info(f"Resolved DIRECT deep-link for '{cleaned[:30]}': {href}")
-                return href
-    except Exception as e:
-        logger.warning(f"DDGS search exception for '{cleaned[:30]}': {e}")
-
-    # Fallback to direct search query link if no deep-link found
-    return f"https://www.google.com/search?q={urllib.parse.quote(query_str)}"
+    return resolve_exact_news_url(title, media, current_url)
 
 def audit_row(item):
     row_num, row, title_idx, media_idx, url_idx, gemini = item

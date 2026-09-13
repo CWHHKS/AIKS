@@ -242,8 +242,15 @@ with st.sidebar:
     sheets_ok = st.session_state.sheets.is_connected()
     sheets_badge = "🟢 Sheets OK" if sheets_ok else "🔴 Sheets Off"
 
-    st.markdown(f'<small>{gemini_badge} | {sheets_badge}</small>', unsafe_allow_html=True)
-    st.caption(f"Model: `{st.session_state.gemini.discovery_model_name if st.session_state.gemini else 'None'}`")
+    from services.audit_agent import GPTNewsAuditor
+    gpt_auditor = GPTNewsAuditor()
+    gpt_ok = gpt_auditor.is_available()
+    gpt_badge = "🟢 GPT Standby OK" if gpt_ok else "🔴 GPT Off"
+
+    st.markdown(f'<small>{gemini_badge} | {sheets_badge} | {gpt_badge}</small>', unsafe_allow_html=True)
+    st.caption(f"Primary Model: `{st.session_state.gemini.discovery_model_name if st.session_state.gemini else 'None'}`")
+    gpt_status_text = f"Ready ({gpt_auditor.model_name})" if gpt_ok else "Not Configured"
+    st.caption(f"GPT Fallback & Auditor: `{gpt_status_text}`")
 
     st.markdown("<hr style='margin: 8px 0;'>", unsafe_allow_html=True)
 
