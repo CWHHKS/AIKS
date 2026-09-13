@@ -266,7 +266,7 @@ with st.sidebar:
         nt = "🟢" if n_info["enabled"] else "⚪"
 
         st.markdown(f"""
-        <div style='background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; font-size: 0.85rem; line-height: 1.6;'>
+        <div style='background-color: var(--secondary-background-color, rgba(128, 128, 128, 0.08)); color: var(--text-color, inherit); border: 1px solid rgba(128, 128, 128, 0.2); border-radius: 8px; padding: 10px; font-size: 0.85rem; line-height: 1.6;'>
             <div>🌐 <b>해외 벤더</b>: <b>{vendor_count}개</b> (목표 {st.session_state.target_count}개) {vt}</div>
             <div>🤝 <b>국내 파트너</b>: <b>{partner_count}개</b> (목표 {p_target}개) {pt}</div>
             <div>📰 <b>AI 뉴스</b>: <b>{news_count}개</b> (목표 {n_target}개) {nt}</div>
