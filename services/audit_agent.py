@@ -12,11 +12,11 @@ logger = logging.getLogger(__name__)
 def _get_api_key(key: str) -> Optional[str]:
     val = os.getenv(key)
     if val:
-        return val
+        return str(val).strip().strip('"').strip("'")
     try:
         import streamlit as st
         if key in st.secrets:
-            return str(st.secrets[key])
+            return str(st.secrets[key]).strip().strip('"').strip("'")
     except Exception:
         pass
     return None
