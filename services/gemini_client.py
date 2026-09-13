@@ -400,10 +400,40 @@ For "company_summary" and "korea_market_relevance", format the text with logical
     def run_news_structuring_stage(self, batch_id: str, discovery_report: str, target_count: int = 5) -> Dict[str, Any]:
         """
         Stage 2: Structuring news articles into JSON.
+        URLs are extracted directly from the Stage 1 raw text via regex and
+        forcibly override any URL the structuring LLM may produce, eliminating
+        URL hallucination entirely.
         """
         logger.info("Starting Stage 2: News Report JSON Structuring...")
         
         import re
+
+        # -----------------------------------------------------------------
+        # Step A: Extract ground-truth URLs from Stage 1 raw text FIRST.
+        # This regex captures lines like:
+        #   - Source URL: https://...
+        # We build a per-article index so we can map them back after Stage 2.
+        # -----------------------------------------------------------------
+        url_pattern = re.compile(
+            r'-\s*Source URL\s*:\s*(https?://[^\s\n\r<"\']+)',
+            re.IGNORECASE
+        )
+        # Split by article boundary to associate URLs with article positions
+        article_blocks = re.split(r'(?=###\s*Article\s+\d+)', discovery_report)
+        article_blocks = [b.strip() for b in article_blocks if b.strip()]
+
+        # Map: article index (0-based) -> exact URL from Stage 1 text
+        ground_truth_urls: Dict[int, str] = {}
+        for idx, block in enumerate(article_blocks):
+            m = url_pattern.search(block)
+            if m:
+                url = m.group(1).strip().rstrip(")")
+                ground_truth_urls[idx] = url
+                logger.info(f"Ground-truth URL [{idx+1}]: {url}")
+
+        # -----------------------------------------------------------------
+        # Step B: Split into sections and let LLM structure the other fields
+        # -----------------------------------------------------------------
         sections = re.split(r'---+\s*(?=### Article)', discovery_report)
         if len(sections) <= 1:
             sections = re.split(r'(?=### Article)', discovery_report)
@@ -422,12 +452,14 @@ Do not perform new web searches.
 Do not add, infer, or invent information.
 Do not include explanations outside the JSON.
 
+IMPORTANT: Copy the Source URL field EXACTLY as written — character for character. Do not modify, shorten, or guess the URL.
+
 Use this JSON structure:
 {
   "title": "original title in article language",
   "korean_title": "Korean translation of the title (or same if already Korean)",
   "source_media": "string",
-  "source_url": "string",
+  "source_url": "copy the Source URL field exactly as written",
   "published_date": "YYYY-MM-DD",
   "language": "EN or KO",
   "primary_ai_category": "allowed category",
@@ -470,9 +502,29 @@ Use this JSON structure:
             except Exception as e:
                 logger.error(f"Failed to structure news article {i+1}: {str(e)}")
                 continue
+
+        # -----------------------------------------------------------------
+        # Step C: Override source_url with ground-truth URLs extracted in
+        # Step A. This completely neutralises Stage 2 URL hallucination.
+        # If no ground-truth URL is available for an article, fall back to
+        # whatever Stage 2 produced (better than nothing).
+        # -----------------------------------------------------------------
+        final_articles = []
+        for i, article in enumerate(parsed_articles[:target_count]):
+            stage2_url = article.get("source_url", "")
+            gt_url = ground_truth_urls.get(i, "")
+            if gt_url:
+                if gt_url != stage2_url:
+                    logger.info(
+                        f"Article [{i+1}] URL corrected: '{stage2_url}' → '{gt_url}'"
+                    )
+                article["source_url"] = gt_url
+            else:
+                logger.warning(
+                    f"Article [{i+1}] no ground-truth URL found; keeping Stage 2 value: '{stage2_url}'"
+                )
+            final_articles.append(article)
                 
-        final_articles = parsed_articles[:target_count]
-        
         combined_result = {
             "batch_id": batch_id,
             "requested_count": target_count,
