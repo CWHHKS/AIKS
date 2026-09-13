@@ -6,3 +6,5 @@ python-dotenv>=1.0.0
 validators>=0.22.0
 pandas>=2.0.0
 apscheduler>=3.10.0
+duckduckgo-search>=6.0.0
+

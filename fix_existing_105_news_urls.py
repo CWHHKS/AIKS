@@ -7,6 +7,7 @@ import re
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any
+from duckduckgo_search import DDGS
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
@@ -17,8 +18,6 @@ load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 from services.sheets_client import SheetsClient
 from services.gemini_client import GeminiClient
-import google.generativeai as genai
-import google.ai.generativelanguage_v1beta as glm
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("FixNewsURLs")
@@ -36,7 +35,7 @@ def is_url_valid(url: str) -> bool:
         return False
     url = url.strip()
     if "google.com/search" in url.lower():
-        return True
+        return False  # We prefer exact direct article URLs over search query links
     if not (url.startswith("http://") or url.startswith("https://")):
         return False
     if url.lower() in ["none", "#", "null"]:
@@ -65,26 +64,19 @@ def get_best_url(title: str, media: str, current_url: str, gemini_client: Gemini
     cleaned = clean_title(title)
     query_str = f"{cleaned} {media}".strip()
 
-    # Try Gemini Grounding
+    # Search web for the exact direct article deep-link
     try:
-        search_tool = glm.Tool(google_search={})
-        model = genai.GenerativeModel(
-            model_name=gemini_client.discovery_model_name,
-            tools=[search_tool]
-        )
-        res = model.generate_content(f"Find direct article link for: {query_str}")
-        if res and res.candidates and hasattr(res.candidates[0], "grounding_metadata"):
-            gm = res.candidates[0].grounding_metadata
-            if hasattr(gm, "grounding_chunks") and gm.grounding_chunks:
-                for chunk in gm.grounding_chunks:
-                    if hasattr(chunk, "web") and hasattr(chunk.web, "uri"):
-                        found_uri = chunk.web.uri
-                        if is_url_valid(found_uri):
-                            return found_uri
-    except Exception:
-        pass
+        ddg = DDGS()
+        results = list(ddg.text(query_str, max_results=6))
+        for res in results:
+            href = res.get("href", "")
+            if href and is_url_valid(href):
+                logger.info(f"Resolved DIRECT deep-link for '{cleaned[:30]}': {href}")
+                return href
+    except Exception as e:
+        logger.warning(f"DDGS search exception for '{cleaned[:30]}': {e}")
 
-    # Direct search link fallback (100% reliable)
+    # Fallback to direct search query link if no deep-link found
     return f"https://www.google.com/search?q={urllib.parse.quote(query_str)}"
 
 def audit_row(item):
@@ -98,7 +90,7 @@ def audit_row(item):
     return row_num, current_url, best_url, was_valid
 
 def main():
-    logger.info("🚀 Starting fast audit and repair of news URLs in Google Sheets...")
+    logger.info("🚀 Starting direct deep-link resolution for news URLs in Google Sheets...")
     sheets = SheetsClient()
     if not sheets.is_connected() or not sheets.news_spreadsheet:
         logger.error("❌ Failed to connect to Google Sheets News spreadsheet.")
@@ -125,38 +117,31 @@ def main():
             if url_idx == -1: url_idx = i
 
     rows = all_values[1:]
-    logger.info(f"Auditing {len(rows)} rows with 10 concurrent threads...")
+    logger.info(f"Resolving direct deep-links for {len(rows)} rows...")
 
     items = [(row_num, row, title_idx, media_idx, url_idx, gemini) for row_num, row in enumerate(rows, start=2)]
 
     results = []
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=8) as executor:
         futures = [executor.submit(audit_row, item) for item in items]
         for f in as_completed(futures):
             res = f.result()
             results.append(res)
-            logger.info(f"Row {res[0]} audited -> {'[VALID]' if res[3] else '[FIXED]'}")
+            logger.info(f"Row {res[0]} -> {'[EXACT DEEP-LINK]' if res[2].startswith('http') and 'google.com/search' not in res[2] else '[SEARCH FALLBACK]'}")
 
     results.sort(key=lambda x: x[0])
 
     fixed_count = sum(1 for r in results if not r[3])
     valid_count = sum(1 for r in results if r[3])
 
-    logger.info(f"Audit complete. Valid: {valid_count}, Fixed: {fixed_count}. Batch updating Google Sheets...")
+    logger.info(f"Audit complete. Valid: {valid_count}, Fixed: {fixed_count}. Updating Google Sheets...")
 
     col_letter = chr(ord('A') + url_idx)
     cell_range = f"{col_letter}2:{col_letter}{len(rows)+1}"
     url_column_data = [[r[2]] for r in results]
 
     worksheet.update(values=url_column_data, range_name=cell_range)
-    logger.info("✅ Batch update of Google Sheets complete!")
-
-    logger.info("==========================================")
-    logger.info(f"🎉 REPAIR COMPLETE!")
-    logger.info(f"Total Rows Audited: {len(rows)}")
-    logger.info(f"Valid URLs Kept  : {valid_count}")
-    logger.info(f"Broken URLs Fixed: {fixed_count}")
-    logger.info("==========================================")
+    logger.info("✅ Direct deep-links batch update of Google Sheets complete!")
 
 if __name__ == "__main__":
     main()
