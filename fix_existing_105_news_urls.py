@@ -35,37 +35,24 @@ def is_url_valid(url: str) -> bool:
     if not url or not isinstance(url, str):
         return False
     url = url.strip()
+    if "google.com/search" in url.lower():
+        return True
     if not (url.startswith("http://") or url.startswith("https://")):
         return False
     if url.lower() in ["none", "#", "null"]:
         return False
     
-    try:
-        p = urllib.parse.urlparse(url)
-        if "google.com/search" in url.lower():
-            return True
-        if not p.path or p.path in ["", "/"]:
-            return False
-    except Exception:
-        return False
-
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     try:
-        resp = requests.head(url, headers=headers, timeout=3, allow_redirects=True)
-        if resp.status_code == 200:
-            final_url = resp.url.lower()
-            if "/error" in final_url or "404" in final_url or "notfound" in final_url:
+        resp = requests.get(url, headers=headers, timeout=4, allow_redirects=True, stream=True)
+        all_urls = [resp.url.lower()] + [h.url.lower() for h in resp.history]
+        for u in all_urls:
+            if "/error" in u or "404" in u or "notfound" in u:
                 return False
+        if resp.status_code == 200:
             return True
-        elif resp.status_code in [403, 405]:
-            resp_get = requests.get(url, headers=headers, timeout=3, allow_redirects=True, stream=True)
-            if resp_get.status_code == 200:
-                final_url = resp_get.url.lower()
-                if "/error" in final_url or "404" in final_url or "notfound" in final_url:
-                    return False
-                return True
     except Exception:
         pass
 
@@ -111,7 +98,7 @@ def audit_row(item):
     return row_num, current_url, best_url, was_valid
 
 def main():
-    logger.info("🚀 Starting multi-threaded fast audit of 105 news URLs...")
+    logger.info("🚀 Starting fast audit and repair of news URLs in Google Sheets...")
     sheets = SheetsClient()
     if not sheets.is_connected() or not sheets.news_spreadsheet:
         logger.error("❌ Failed to connect to Google Sheets News spreadsheet.")
@@ -150,15 +137,13 @@ def main():
             results.append(res)
             logger.info(f"Row {res[0]} audited -> {'[VALID]' if res[3] else '[FIXED]'}")
 
-    # Sort results by row_num
     results.sort(key=lambda x: x[0])
 
     fixed_count = sum(1 for r in results if not r[3])
     valid_count = sum(1 for r in results if r[3])
 
-    logger.info(f"Audit complete. Valid: {valid_count}, Fixed: {fixed_count}. Updating Google Sheets in batch...")
+    logger.info(f"Audit complete. Valid: {valid_count}, Fixed: {fixed_count}. Batch updating Google Sheets...")
 
-    # Prepare column batch update
     col_letter = chr(ord('A') + url_idx)
     cell_range = f"{col_letter}2:{col_letter}{len(rows)+1}"
     url_column_data = [[r[2]] for r in results]
@@ -167,7 +152,7 @@ def main():
     logger.info("✅ Batch update of Google Sheets complete!")
 
     logger.info("==========================================")
-    logger.info(f"🎉 100% REPAIR COMPLETE!")
+    logger.info(f"🎉 REPAIR COMPLETE!")
     logger.info(f"Total Rows Audited: {len(rows)}")
     logger.info(f"Valid URLs Kept  : {valid_count}")
     logger.info(f"Broken URLs Fixed: {fixed_count}")
