@@ -418,9 +418,14 @@ For "company_summary" and "korea_market_relevance", format the text with logical
             r'-\s*Source URL\s*:\s*(https?://[^\s\n\r<"\']+)',
             re.IGNORECASE
         )
-        # Split by article boundary to associate URLs with article positions
-        article_blocks = re.split(r'(?=###\s*Article\s+\d+)', discovery_report)
-        article_blocks = [b.strip() for b in article_blocks if b.strip()]
+        # Split by article boundary to associate URLs with article positions.
+        # Filter to only blocks that contain a real ### Article N header so
+        # any AI preamble text before the first article does not shift indices.
+        article_blocks_raw = re.split(r'(?=###\s*Article\s+\d+)', discovery_report)
+        article_blocks = [
+            b.strip() for b in article_blocks_raw
+            if re.match(r'###\s*Article\s+\d+', b.strip())
+        ]
 
         # Map: article index (0-based) -> exact URL from Stage 1 text
         ground_truth_urls: Dict[int, str] = {}

@@ -79,7 +79,7 @@ def collect_news(target_count: int = 5, time_label: str = "Evening") -> List[Dic
 
     valid = []
     for a in raw_news:
-        url = a.get("source_url", "").strip().lower()
+        url = (a.get("source_url") or "").strip().lower()
         if url and url in existing_urls:
             continue
         a["collected_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
