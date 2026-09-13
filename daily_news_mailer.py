@@ -78,9 +78,30 @@ def collect_news(target_count: int = 5, time_label: str = "Evening") -> List[Dic
     raw_news = structured.get("candidates", [])
 
     valid = []
+    import urllib.parse
     for a in raw_news:
-        url = (a.get("source_url") or "").strip().lower()
-        if url and url in existing_urls:
+        url = (a.get("source_url") or "").strip()
+        is_invalid = False
+        if not url or url.lower() in ["none", "#", "null"]:
+            is_invalid = True
+        elif url.startswith("http://") or url.startswith("https://"):
+            try:
+                p = urllib.parse.urlparse(url)
+                if not p.path or p.path in ["", "/"]:
+                    is_invalid = True
+            except Exception:
+                is_invalid = True
+        else:
+            is_invalid = True
+
+        if is_invalid:
+            title_q = a.get("title") or a.get("korean_title") or "AI News"
+            media_q = a.get("source_media", "")
+            q_str = f"{title_q} {media_q}".strip()
+            url = f"https://www.google.com/search?q={urllib.parse.quote(q_str)}"
+            a["source_url"] = url
+
+        if url and url.lower() in [u.lower() for u in existing_urls]:
             continue
         a["collected_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         a["review_status"] = "Auto-Collected"
