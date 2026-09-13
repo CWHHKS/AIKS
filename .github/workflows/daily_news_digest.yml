@@ -1,0 +1,90 @@
+name: AI Daily News Automated Digest
+
+on:
+  schedule:
+    # 09:00 UTC is 18:00 KST (Evening Collection)
+    - cron: '0 9 * * *'
+    # 21:00 UTC is 06:00 KST next day (Morning Collection & Combined Dispatch)
+    - cron: '0 21 * * *'
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Select Action to execute'
+        required: true
+        default: 'collect_and_send'
+        type: choice
+        options:
+          - collect_and_send
+          - collect_evening
+          - test_send
+      article_count:
+        description: 'Number of articles to collect'
+        required: false
+        default: '5'
+      recipient:
+        description: 'Recipient Email'
+        required: false
+        default: 'changwan.lim@agichang.ai'
+
+jobs:
+  run-digest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Determine Target Action
+        id: determine_action
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "ACTION=${{ github.event.inputs.action }}" >> $GITHUB_OUTPUT
+            echo "COUNT=${{ github.event.inputs.article_count }}" >> $GITHUB_OUTPUT
+            echo "RECIPIENT=${{ github.event.inputs.recipient }}" >> $GITHUB_OUTPUT
+          else
+            CURRENT_HOUR=$(date -u +%H)
+            if [ "$CURRENT_HOUR" = "09" ]; then
+              echo "ACTION=collect_evening" >> $GITHUB_OUTPUT
+            else
+              echo "ACTION=collect_and_send" >> $GITHUB_OUTPUT
+            fi
+            echo "COUNT=5" >> $GITHUB_OUTPUT
+            echo "RECIPIENT=changwan.lim@agichang.ai" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run News Engine
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_RECEIVER: ${{ steps.determine_action.outputs.RECIPIENT }}
+          EMAIL_SMTP_SERVER: ${{ secrets.EMAIL_SMTP_SERVER || 'smtp.gmail.com' }}
+          EMAIL_SMTP_PORT: ${{ secrets.EMAIL_SMTP_PORT || '465' }}
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+          SPREADSHEET_KEY: ${{ secrets.SPREADSHEET_KEY }}
+        run: |
+          python daily_news_mailer.py \
+            --action ${{ steps.determine_action.outputs.ACTION }} \
+            --count ${{ steps.determine_action.outputs.COUNT }} \
+            --to "${{ steps.determine_action.outputs.RECIPIENT }}"
+
+      - name: Commit & Push Buffered News (if evening run)
+        if: steps.determine_action.outputs.ACTION == 'collect_evening'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "AIKA News Bot"
+          git add data/news_daily_buffer.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update evening news buffer [skip ci]" && git push)
