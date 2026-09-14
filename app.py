@@ -12,16 +12,18 @@ import services.gemini_client
 import services.sheets_client
 import services.url_resolver
 import services.audit_agent
+import services.validator
 
 importlib.reload(services.gemini_client)
 importlib.reload(services.sheets_client)
 importlib.reload(services.url_resolver)
 importlib.reload(services.audit_agent)
+importlib.reload(services.validator)
 
 from services.gemini_client import GeminiClient
 from services.sheets_client import SheetsClient
 from services.batch_service import BatchService, CATEGORY_CODES
-from services.validator import validate_candidate, sanitize_value_for_sheets, ALLOWED_CATEGORIES
+from services.validator import validate_article
 from services.scheduler_service import SchedulerService
 
 # Logging config
