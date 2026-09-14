@@ -23,7 +23,9 @@ def _get_gemini_setting(key: str, default: Optional[str] = None) -> Optional[str
             return str(st.secrets[key])
     except Exception:
         pass
-    return default
+class SafeDict(dict):
+    def __missing__(self, key):
+        return f"{{{key}}}"
 
 class GeminiClient:
     def __init__(self):
@@ -64,19 +66,19 @@ class GeminiClient:
         domains_str = "\n".join([f"- {d}" for d in existing_domains]) if existing_domains else "None"
         
         # Format user prompt
-        user_prompt = self.batch_prompt_template.format(
-            batch_id=batch_params.get("batch_id"),
-            region=batch_params.get("region"),
-            category=batch_params.get("category"),
-            industries=batch_params.get("industries"),
-            minimum_confidence_score=batch_params.get("minimum_confidence_score", 70),
-            hyperscale_policy="Exclude major hyperscalers (Microsoft, Google, AWS, etc.)" if batch_params.get("exclude_hyperscalers", True) else "No restriction",
-            korea_presence_policy=batch_params.get("korea_presence_policy", "포함하되 표시"),
-            research_date=batch_params.get("research_date"),
-            existing_domains=domains_str,
-            preferred_sources=batch_params.get("preferred_sources", "None (Search generally)"),
-            target_count=batch_params.get("target_count", 5)
-        )
+        user_prompt = self.batch_prompt_template.format_map(SafeDict({
+            "batch_id": batch_params.get("batch_id", ""),
+            "region": batch_params.get("region", ""),
+            "category": batch_params.get("category", ""),
+            "industries": batch_params.get("industries", ""),
+            "minimum_confidence_score": batch_params.get("minimum_confidence_score", 70),
+            "hyperscale_policy": "Exclude major hyperscalers (Microsoft, Google, AWS, etc.)" if batch_params.get("exclude_hyperscalers", True) else "No restriction",
+            "korea_presence_policy": batch_params.get("korea_presence_policy", "포함하되 표시"),
+            "research_date": batch_params.get("research_date", ""),
+            "existing_domains": domains_str,
+            "preferred_sources": batch_params.get("preferred_sources", "None (Search generally)"),
+            "target_count": batch_params.get("target_count", 5)
+        }))
         
         # Define model with System Instruction and Search Grounding tool
         search_tool = glm.Tool(google_search={})
@@ -216,19 +218,19 @@ For "company_summary" and "korea_market_relevance", format the text with logical
         domains_str = "\n".join([f"- {d}" for d in existing_domains]) if existing_domains else "None"
         
         # Format user prompt
-        user_prompt = self.partner_discovery_prompt_template.format(
-            batch_id=batch_params.get("batch_id"),
-            vendor_match=batch_params.get("vendor_match", "None (General search)"),
-            category=batch_params.get("category"),
-            industries=batch_params.get("industries"),
-            minimum_confidence_score=batch_params.get("minimum_confidence_score", 70),
-            research_date=batch_params.get("research_date"),
-            existing_domains=domains_str,
-            preferred_sources=batch_params.get("preferred_sources", "None (Search generally)"),
-            target_count=batch_params.get("target_count", 5),
-            max_discovery_candidates=batch_params.get("max_discovery_candidates", 15),
-            exclude_small_policy="Exclude small boutique agencies. Prioritize mid-to-large SIs, MSPs, and established IT distributors." if batch_params.get("exclude_small_agencies", True) else "No restriction on partner scale."
-        )
+        user_prompt = self.partner_discovery_prompt_template.format_map(SafeDict({
+            "batch_id": batch_params.get("batch_id", ""),
+            "vendor_match": batch_params.get("vendor_match", "None (General search)"),
+            "category": batch_params.get("category", ""),
+            "industries": batch_params.get("industries", ""),
+            "minimum_confidence_score": batch_params.get("minimum_confidence_score", 70),
+            "research_date": batch_params.get("research_date", ""),
+            "existing_domains": domains_str,
+            "preferred_sources": batch_params.get("preferred_sources", "None (Search generally)"),
+            "target_count": batch_params.get("target_count", 5),
+            "max_discovery_candidates": batch_params.get("max_discovery_candidates", 15),
+            "exclude_small_policy": "Exclude small boutique agencies. Prioritize mid-to-large SIs, MSPs, and established IT distributors." if batch_params.get("exclude_small_agencies", True) else "No restriction on partner scale."
+        }))
         
         # Define model with System Instruction and Search Grounding tool
         search_tool = glm.Tool(google_search={})
@@ -360,32 +362,49 @@ For "company_summary" and "korea_market_relevance", format the text with logical
         """
         logger.info("Starting Stage 1: News Discovery with Google Search...")
         
+        # Dynamically reload prompt template to ensure disk edits take effect immediately
+        self.news_discovery_prompt_template = self._load_prompt("prompts/news_discovery.txt")
+        
         urls_str = "\n".join([f"- {u}" for u in existing_urls]) if existing_urls else "None"
         
-        user_prompt = self.news_discovery_prompt_template.format(
-            batch_id=batch_params.get("batch_id"),
-            primary_category=batch_params.get("primary_category", "All"),
-            news_topic=batch_params.get("news_topic", "All"),
-            language=batch_params.get("language", "All (EN + KO)"),
-            target_count=batch_params.get("target_count", 5),
-            research_date=batch_params.get("research_date"),
-            preferred_sources=batch_params.get("preferred_sources", "None"),
-            existing_urls=urls_str
-        )
+        user_prompt = self.news_discovery_prompt_template.format_map(SafeDict({
+            "batch_id": batch_params.get("batch_id", ""),
+            "primary_category": batch_params.get("primary_category", "All"),
+            "news_topic": batch_params.get("news_topic", "All"),
+            "language": batch_params.get("language", "All (EN + KO)"),
+            "target_count": batch_params.get("target_count", 5),
+            "research_date": batch_params.get("research_date", ""),
+            "since_date": batch_params.get("since_date", "30 days ago"),
+            "preferred_sources": batch_params.get("preferred_sources", "None"),
+            "existing_urls": urls_str
+        }))
         
-        search_tool = glm.Tool(google_search={})
+        curr_year = batch_params.get("research_date", "2026")[:4]
+        since_val = batch_params.get("since_date", "")
+        recency_str = f"published ON OR AFTER {since_val}" if since_val else f"published in the CURRENT YEAR ({curr_year}) and recent 30 days"
         news_system_prompt = (
             "You are a professional AI industry journalist and news intelligence analyst for AIKA (AI Korea Access).\n"
             "Your objective is to find, verify, and summarize the latest high-impact AI technology and business news.\n\n"
             "CRITICAL INSTRUCTIONS:\n"
             "1. Ground all findings in real Google Search results.\n"
-            "2. SOURCE URL INTEGRITY: You MUST provide the exact, live, full article URL from search results. NEVER invent, guess, or hallucinate URLs.\n"
-            "3. If an article is in English, always provide an accurate, natural Korean title translation alongside the original title.\n"
-            "4. Provide high-quality Korean summaries and structured 10-line breakdown bullet points."
+            f"2. STRICT RECENCY MANDATE: Search ONLY for fresh, breaking news {recency_str}. REJECT and DO NOT RETURN outdated articles published before this period.\n"
+            "3. MULTI-SOURCE CONSENSUS: For every AI news event, find AT LEAST 3 DIFFERENT MEDIA OUTLETS (e.g. ZDNet Korea, ETNews, Digital Daily, Yonhap News, Naver News) covering the exact same event. List all 3+ URLs under 'Reference URLs'.\n"
+            "4. SOURCE URL INTEGRITY: You MUST provide exact, live, working article URLs discovered from search. NEVER invent, guess, or hallucinate URLs.\n"
+            "5. If an article is in English, always provide an accurate, natural Korean title translation alongside the original title.\n"
+            "6. Provide high-quality Korean summaries and structured 10-line breakdown bullet points."
         )
         
         real_grounding_urls = []
+        pipeline_mode = os.getenv("PIPELINE_MODE", "standard").strip().lower()
+
+        if pipeline_mode == "reversed":
+            logger.info("🔄 [REVERSED MODE] Running Stage 1 News Discovery with GPT-4o...")
+            raw_text = self._fallback_openai_discovery(user_prompt, news_system_prompt)
+            self._last_grounding_urls = []
+            return raw_text
+
         try:
+            search_tool = glm.Tool(google_search={})
             model = genai.GenerativeModel(
                 model_name=self.discovery_model_name,
                 system_instruction=news_system_prompt,
@@ -406,7 +425,18 @@ For "company_summary" and "korea_market_relevance", format the text with logical
                                 "uri": chunk.web.uri,
                                 "title": getattr(chunk.web, "title", "")
                             })
-                logger.info(f"Extracted {len(real_grounding_urls)} verified real URIs from Gemini Search grounding_metadata.")
+
+            # Regex fallback extraction of all direct HTTPS URLs from Stage 1 raw text
+            import re
+            extracted_uris = re.findall(r'https?://[^\s\)\>\]\'"]+', raw_text)
+            seen_uris = {item["uri"] for item in real_grounding_urls}
+            for uri in extracted_uris:
+                clean_u = uri.rstrip(".,;")
+                if clean_u and clean_u not in seen_uris:
+                    seen_uris.add(clean_u)
+                    real_grounding_urls.append({"uri": clean_u, "title": clean_u})
+
+            logger.info(f"Extracted {len(real_grounding_urls)} verified real URIs from Gemini Search grounding_metadata and text.")
         except Exception as e:
             logger.warning(f"⚠️ [LLM FAILOVER TRIGGERED] Gemini Discovery API Exception: {e}. Falling back to OpenAI GPT Collector...")
             raw_text = self._fallback_openai_discovery(user_prompt, news_system_prompt)
@@ -422,9 +452,9 @@ For "company_summary" and "korea_market_relevance", format the text with logical
             raise ValueError("Gemini API failed and OPENAI_API_KEY is not set.")
         from openai import OpenAI
         client = OpenAI(api_key=api_key)
-        logger.info("Running News Discovery via Fallback OpenAI GPT Collector (gpt-4o-mini)...")
+        logger.info("Running News Discovery via Fallback OpenAI GPT Collector (gpt-4o)...")
         response = client.chat.completions.create(
-            model=os.getenv("GPT_AUDIT_MODEL", "gpt-4o-mini"),
+            model=os.getenv("GPT_AUDIT_MODEL", "gpt-4o"),
             messages=[
                 {"role": "system", "content": news_system_prompt},
                 {"role": "user", "content": user_prompt}
@@ -501,6 +531,7 @@ Use this JSON structure:
   "korean_title": "Korean translation of the title (or same if already Korean)",
   "source_media": "string",
   "source_url": "copy the Source URL field exactly as written",
+  "reference_urls": ["list of at least 3 distinct working candidate reference URLs from search"],
   "published_date": "YYYY-MM-DD",
   "language": "EN or KO",
   "primary_ai_category": "allowed category",
@@ -546,7 +577,7 @@ Use this JSON structure:
                         from openai import OpenAI
                         client = OpenAI(api_key=api_key)
                         res = client.chat.completions.create(
-                            model=os.getenv("GPT_AUDIT_MODEL", "gpt-4o-mini"),
+                            model=os.getenv("GPT_AUDIT_MODEL", "gpt-4o"),
                             response_format={"type": "json_object"},
                             messages=[
                                 {"role": "system", "content": "You are a JSON structuring assistant."},
@@ -594,12 +625,34 @@ Use this JSON structure:
                 chosen_url = last_grounding[i].get("uri", "")
                 logger.info(f"Article [{i+1}] mapped URL from grounding_metadata: {chosen_url}")
 
-            # Direct site URL integrity enforcement: Never output search query URLs (google.com/search)
-            if not chosen_url or chosen_url.lower() in ["none", "#", "null"] or "google.com/search" in chosen_url.lower():
-                chosen_url = ""
-                logger.info(f"Article [{i+1}] direct site URL pending resolution by URL Resolver.")
+            # Filter out non-news prompt instruction preamble blocks safely
+            t_str = str(article.get("title") or "")
+            m_str = str(article.get("source_media") or "")
+            k_str = str(article.get("korean_title") or "")
+            title_check = f"{t_str} {m_str} {k_str}".lower()
+            if any(instr in title_check for instr in [
+                "google search guide", "guide on how to", "instruction",
+                "search guide", "search instruction", "prompt instruction"
+            ]):
+                logger.info(f"Article [{i+1}] skipped: Non-news prompt instruction block detected ({t_str})")
+                continue
 
             article["source_url"] = chosen_url
+            
+            # Build list of candidate reference URLs for Stage 3 Auditor
+            ref_candidates = []
+            if chosen_url and chosen_url.startswith("http"):
+                ref_candidates.append(chosen_url)
+            if gt_url and gt_url.startswith("http") and gt_url not in ref_candidates:
+                ref_candidates.append(gt_url)
+            if stage2_url and stage2_url.startswith("http") and stage2_url not in ref_candidates:
+                ref_candidates.append(stage2_url)
+            for g_item in last_grounding:
+                g_uri = g_item.get("uri", "")
+                if g_uri and g_uri.startswith("http") and g_uri not in ref_candidates:
+                    ref_candidates.append(g_uri)
+            
+            article["reference_urls"] = ref_candidates
             final_articles.append(article)
                 
         combined_result = {
@@ -612,6 +665,105 @@ Use this JSON structure:
         logger.info(f"Stage 2 completed successfully. Structured {len(final_articles)} news articles.")
         return combined_result
 
+    def run_tri_engine_discovery(self, batch_params: Dict[str, Any], existing_urls: List[str], status_callback: Optional[Any] = None) -> Dict[str, Any]:
+        """
+        Tri-Engine News Discovery:
+        1. Gemini Google Search Grounding.
+        2. Perplexity AI Real-Time Search (if PERPLEXITY_API_KEY present).
+        3. Naver News Real-Time Search (API / HTML Scraper).
+        Merges candidates and pools all reference URLs so every headline has >=3 reference URLs.
+        """
+        topic = batch_params.get("news_topic", "")
+        res_date = batch_params.get("research_date", "")
+
+        def _collect_current_urls(candidates, g_urls):
+            pooled = []
+            seen = set()
+            for g in g_urls:
+                u = g.get("uri") if isinstance(g, dict) else str(g)
+                if u and u.startswith("http") and u not in seen:
+                    seen.add(u)
+                    t = g.get("title") if isinstance(g, dict) else u
+                    pooled.append({"uri": u, "title": t or u})
+            for c in candidates:
+                s_url = c.get("source_url", "")
+                c_title = c.get("title") or c.get("korean_title") or "Article Link"
+                c_media = c.get("source_media", "News")
+                if s_url and s_url.startswith("http") and s_url not in seen:
+                    seen.add(s_url)
+                    pooled.append({"uri": s_url, "title": f"[{c_media}] {c_title}"})
+                for ref in c.get("reference_urls", []):
+                    if ref and ref.startswith("http") and ref not in seen:
+                        seen.add(ref)
+                        pooled.append({"uri": ref, "title": ref})
+            return pooled
+
+        # 1. Gemini Grounding Discovery
+        if status_callback:
+            status_callback("🌐 1/3 Gemini Search Grounding 탐색 중...")
+        gemini_raw_report = self.run_news_discovery_stage(batch_params, existing_urls)
+        gemini_result = self.run_news_structuring_stage(
+            batch_params.get("batch_id", ""),
+            gemini_raw_report,
+            target_count=batch_params.get("target_count", 5)
+        )
+        base_candidates = gemini_result.get("candidates", [])
+        
+        current_g_urls = getattr(self, "_last_grounding_urls", [])
+        urls_step1 = _collect_current_urls(base_candidates, current_g_urls)
+        if status_callback:
+            status_callback(f"🌐 1/3 Gemini 탐색 완료 ({len(urls_step1)}개 참고 URL 발견)", urls=urls_step1)
+
+        # 2. Perplexity AI Real-Time Search
+        try:
+            from services.perplexity_client import PerplexityNewsClient
+            px_client = PerplexityNewsClient()
+            if px_client.is_available():
+                if status_callback:
+                    status_callback("⚡ 2/3 Perplexity AI 실시간 검색 중...")
+                px_candidates = px_client.search_news_candidates(topic, res_date, max_results=3)
+                for px in px_candidates:
+                    base_candidates.append(px)
+                urls_step2 = _collect_current_urls(base_candidates, current_g_urls)
+                if status_callback:
+                    status_callback(f"⚡ 2/3 Perplexity AI 탐색 완료 ({len(urls_step2)}개 참고 URL 발견)", urls=urls_step2)
+        except Exception as px_err:
+            logger.warning(f"Perplexity integration error: {px_err}")
+
+        # 3. Naver News Real-Time Search
+        try:
+            if status_callback:
+                status_callback("🇰🇷 3/3 네이버 실시간 뉴스 수집 중...")
+            from services.naver_search import get_naver_news_candidates
+            naver_candidates = get_naver_news_candidates(topic, display=5)
+            for nv in naver_candidates:
+                base_candidates.append(nv)
+            urls_step3 = _collect_current_urls(base_candidates, current_g_urls)
+            if status_callback:
+                status_callback(f"🇰🇷 3/3 네이버 뉴스 수집 완료 ({len(urls_step3)}개 참고 URL 발견)", urls=urls_step3)
+        except Exception as nv_err:
+            logger.warning(f"Naver News integration error: {nv_err}")
+
+        # Final Pooling and deduplicating reference URLs across candidates and engines
+        all_grounding_uris = [g.get("uri") for g in getattr(self, "_last_grounding_urls", []) if isinstance(g, dict) and g.get("uri")]
+        pooled_urls = _collect_current_urls(base_candidates, getattr(self, "_last_grounding_urls", []))
+
+        for cand in base_candidates:
+            refs = cand.get("reference_urls", [])
+            if not isinstance(refs, list):
+                refs = []
+            s_url = cand.get("source_url", "")
+            if s_url and s_url.startswith("http") and s_url not in refs:
+                refs.append(s_url)
+            for g_uri in all_grounding_uris:
+                if g_uri and g_uri not in refs:
+                    refs.append(g_uri)
+            cand["reference_urls"] = refs
+
+        self._last_grounding_urls = pooled_urls
+        gemini_result["candidates"] = base_candidates
+        return gemini_result
+
     def test_connection(self) -> bool:
         """
         Tests if the Gemini API key is valid by running a lightweight call.
@@ -623,4 +775,5 @@ Use this JSON structure:
         except Exception as e:
             logger.error(f"Gemini API connection test failed: {str(e)}")
             return False
+
 

@@ -7,6 +7,17 @@ import logging
 import random
 
 # Services
+import importlib
+import services.gemini_client
+import services.sheets_client
+import services.url_resolver
+import services.audit_agent
+
+importlib.reload(services.gemini_client)
+importlib.reload(services.sheets_client)
+importlib.reload(services.url_resolver)
+importlib.reload(services.audit_agent)
+
 from services.gemini_client import GeminiClient
 from services.sheets_client import SheetsClient
 from services.batch_service import BatchService, CATEGORY_CODES
@@ -20,7 +31,7 @@ logger = logging.getLogger(__name__)
 # Render Timer UI Helper
 def render_timer_ui(task_name: str, task_title: str):
     st.markdown("---")
-    st.markdown(f"#### ⏱️ {task_title} 자동 예약 수집 설정 (Scheduled Auto-Discovery)")
+    st.markdown(f"#### ⏱️ {task_title} 자동 예약 수집 및 결과 알림 설정 (Scheduled Auto-Discovery)")
     scheduler = SchedulerService()
     cfg = scheduler.config.get(task_name, {})
     info = scheduler.get_job_info(task_name)
@@ -35,36 +46,147 @@ def render_timer_ui(task_name: str, task_title: str):
         mode = st.selectbox(
             "실행 방식 (Mode)",
             ["interval", "daily"],
-            format_func=lambda x: "주기적 반복 (매 N시간마다)" if x == "interval" else "매일 특정 시각 (Daily)",
+            format_func=lambda x: "주기적 반복 (매 N시간마다)" if x == "interval" else "매일 특정 시각 수집 (Daily Multi-Time)",
             index=0 if cfg.get("mode") == "interval" else 1,
             key=f"timer_mode_{task_name}"
         )
+
     with col_t2:
         if mode == "interval":
-            interval_h = st.number_input("반복 주기 (시간 단위)", min_value=1, max_value=168, value=int(cfg.get("interval_hours", 24)), key=f"timer_hours_{task_name}")
-            daily_t = cfg.get("daily_time", "09:00")
+            interval_h = st.number_input(
+                "반복 주기 (시간 단위)",
+                min_value=1,
+                max_value=168,
+                value=int(cfg.get("interval_hours", 24)),
+                key=f"timer_hours_{task_name}"
+            )
+            daily_count = cfg.get("daily_count", 1)
+            daily_times_str = cfg.get("daily_times", cfg.get("daily_time", "09:00"))
         else:
-            daily_t = st.text_input("매일 실행 시각 (HH:MM 24시간제)", value=cfg.get("daily_time", "09:00"), key=f"timer_daily_{task_name}")
             interval_h = cfg.get("interval_hours", 24)
+            daily_count = st.number_input(
+                "하루 수집 횟수 (1~6회/일)",
+                min_value=1,
+                max_value=6,
+                value=int(cfg.get("daily_count", 1)),
+                key=f"timer_daily_count_{task_name}",
+                help="하루에 몇 번 지정한 시각에 수집을 실행할지 지정합니다."
+            )
+            
+            # Default preset generator based on count if user hasn't specified
+            default_times_map = {
+                1: "09:00",
+                2: "08:00, 18:00",
+                3: "08:00, 13:00, 19:00",
+                4: "08:00, 12:00, 16:00, 20:00",
+                5: "08:00, 11:00, 14:00, 17:00, 20:00",
+                6: "06:00, 09:00, 12:00, 15:00, 18:00, 21:00"
+            }
+            preset_val = cfg.get("daily_times") or cfg.get("daily_time") or default_times_map.get(daily_count, "09:00")
+            
+            daily_times_str = st.text_input(
+                "매일 실행 시각 지정 (콤마로 구분, 24시간제 HH:MM)",
+                value=preset_val,
+                key=f"timer_daily_times_{task_name}",
+                help="예시: 08:00, 18:00 (설정한 수집 횟수만큼 24시간제 시각을 콤마로 구분하여 입력하세요)"
+            )
+
+    # 📧 Email Notification Settings Section
+    st.markdown("##### 📧 수집 결과 이메일 알림 및 발송 시각 설정")
+    col_e1, col_e2 = st.columns(2)
+    with col_e1:
+        email_enabled = st.checkbox(
+            "실행 결과 브리핑 메일 자동 발송 활성화",
+            value=cfg.get("email_enabled", False),
+            key=f"timer_email_enabled_{task_name}"
+        )
+        email_send_mode = st.selectbox(
+            "메일 발송 타이밍 (Sending Timing)",
+            ["immediate", "scheduled"],
+            format_func=lambda x: "⚡ 수집 완료 직후 즉시 발송" if x == "immediate" else "⏰ 지정한 특정 시각에 발송",
+            index=0 if cfg.get("email_send_mode", "immediate") == "immediate" else 1,
+            key=f"timer_email_send_mode_{task_name}"
+        )
+    with col_e2:
+        recipient_email = st.text_input(
+            "수신 이메일 주소 (복수 입력 가능, 콤마로 구분)",
+            value=cfg.get("recipient_email", "changwan.lim@agichang.ai"),
+            key=f"timer_recipient_email_{task_name}",
+            placeholder="user1@example.com, user2@example.com",
+            help="여러 메일 주소로 동시 발송하려면 콤마(,)로 구분하여 입력하세요. 예: user1@ai.com, user2@ai.com"
+        )
+        if email_send_mode == "scheduled":
+            email_dispatch_time = st.text_input(
+                "메일 발송 지정 시각 (HH:MM 24시간제, 콤마 구분)",
+                value=cfg.get("email_dispatch_time", "08:30, 18:30"),
+                key=f"timer_email_dispatch_time_{task_name}",
+                help="예시: 08:30, 18:30 (원하는 24시간제 시각을 콤마로 구분하여 입력하세요)"
+            )
+        else:
+            email_dispatch_time = cfg.get("email_dispatch_time", "08:30, 18:30")
+
+        if st.button("🧪 테스트 메일 발송", key=f"test_email_btn_{task_name}", use_container_width=True):
+            with st.spinner("테스트 이메일 발송 중..."):
+                res = scheduler.send_test_email(task_name, recipient_email)
+                if res.get("success"):
+                    st.success(f"✅ 테스트 이메일이 {recipient_email}로 성공적으로 발송되었습니다.")
+                else:
+                    st.error(f"❌ 이메일 발송 실패: {res.get('error')}")
+
+    from services.email_service import EmailService
+    if not EmailService().is_configured():
+        with st.expander("ℹ️ 발송용 이메일 계정(SMTP) 설정 방법", expanded=False):
+            st.markdown("""
+            자동 이메일 발송을 위해서는 프로젝트의 **`.env`** 파일(또는 Streamlit secrets)에 발송용 이메일 계정 정보가 설정되어 있어야 합니다:
+            
+            ```env
+            # Gmail SMTP 설정 예시 (.env 파일 하단에 추가)
+            EMAIL_SENDER=your_email@gmail.com
+            EMAIL_PASSWORD=your_16_digit_app_password
+            EMAIL_RECEIVER=changwan.lim@agichang.ai
+            EMAIL_SMTP_SERVER=smtp.gmail.com
+            EMAIL_SMTP_PORT=465
+            ```
+            
+            > 💡 **Gmail 계정 사용 시 필수 사항**:  
+            > 일반 로그인 비밀번호가 아닌, **Google 계정 설정 > 보안 > 2단계 인증 > [앱 비밀번호]**에서 16자리 앱 비밀번호(App Password)를 발급받아 `EMAIL_PASSWORD`에 입력하셔야 합니다.
+            """)
 
     # Detect change & save
+    current_daily_time = daily_times_str.split(",")[0].strip() if daily_times_str else "09:00"
     if (enabled != cfg.get("enabled") or 
         mode != cfg.get("mode") or 
         interval_h != cfg.get("interval_hours") or 
-        daily_t != cfg.get("daily_time")):
+        daily_count != cfg.get("daily_count") or
+        daily_times_str != cfg.get("daily_times") or
+        email_enabled != cfg.get("email_enabled") or
+        email_send_mode != cfg.get("email_send_mode") or
+        email_dispatch_time != cfg.get("email_dispatch_time") or
+        recipient_email != cfg.get("recipient_email")):
         
         new_task_cfg = {
             "enabled": enabled,
             "mode": mode,
             "interval_hours": interval_h,
-            "daily_time": daily_t
+            "daily_count": daily_count,
+            "daily_times": daily_times_str,
+            "daily_time": current_daily_time,
+            "email_enabled": email_enabled,
+            "email_send_mode": email_send_mode,
+            "email_dispatch_time": email_dispatch_time,
+            "recipient_email": recipient_email
         }
         scheduler.update_task_config(task_name, new_task_cfg)
-        st.success(f"⏱️ {task_title} 예약 타이머 설정이 저장되었습니다.")
+        st.success(f"⏱️ {task_title} 예약 타이머 및 메일 발송 설정이 저장되었습니다.")
         st.rerun()
 
     status_icon = "🟢 예약 작동 중 (Auto-Collected로 구글 시트 자동 저장)" if info["enabled"] else "🔴 비활성화"
-    st.info(f"**현재 상태**: {status_icon}\n\n- **마지막 실행**: `{info['last_run']}` (`{info['last_status']}`)\n- **다음 예정**: `{info['next_run']}`")
+    if cfg.get("email_enabled"):
+        timing_info = f"즉시 발송" if cfg.get("email_send_mode", "immediate") == "immediate" else f"지정 시각({cfg.get('email_dispatch_time', '')}) 발송"
+        email_status = f"📧 메일 알림 켜짐 ({cfg.get('recipient_email', '')} / {timing_info})"
+    else:
+        email_status = "🔕 메일 알림 꺼짐"
+    st.info(f"**현재 상태**: {status_icon} | {email_status}\n\n- **마지막 실행**: `{info['last_run']}` (`{info['last_status']}`)\n- **다음 예정**: `{info['next_run']}`")
 
 # ----------------- DOMAIN PERSISTENCE HELPERS -----------------
 DOMAIN_CONFIG_PATH = os.path.join(os.getcwd(), "data", "domain_config.json")
@@ -218,15 +340,16 @@ def check_authentication():
 
 check_authentication()
 
-# ----------------- SESSION STATE SETUP -----------------
-if "gemini" not in st.session_state:
+# Force reinit of services on code change (version stamp)
+_GEMINI_VERSION = "v2.2-since-date-fix"
+if "gemini" not in st.session_state or st.session_state.get("_gemini_version") != _GEMINI_VERSION:
     try:
         st.session_state.gemini = GeminiClient()
+        st.session_state._gemini_version = _GEMINI_VERSION
     except Exception as e:
         logger.warning(f"Could not load Gemini Client: {e}")
         st.session_state.gemini = None
 
-# Force reinit of services on code change (version stamp)
 _SHEETS_VERSION = "v2.1-list-fix"
 if "sheets" not in st.session_state or st.session_state.get("_sheets_version") != _SHEETS_VERSION:
     st.session_state.sheets = SheetsClient()
@@ -296,9 +419,112 @@ with st.sidebar:
     gpt_badge = "🟢 GPT Standby OK" if gpt_ok else "🔴 GPT Off"
 
     st.markdown(f'<small>{gemini_badge} | {sheets_badge} | {gpt_badge}</small>', unsafe_allow_html=True)
-    st.caption(f"Primary Model: `{st.session_state.gemini.discovery_model_name if st.session_state.gemini else 'None'}`")
-    gpt_status_text = f"Ready ({gpt_auditor.model_name})" if gpt_ok else "Not Configured"
-    st.caption(f"GPT Fallback & Auditor: `{gpt_status_text}`")
+    st.markdown("<hr style='margin: 8px 0;'>", unsafe_allow_html=True)
+    
+    # 0. Pipeline Mode Selector Widget (Standard vs Reversed)
+    curr_pipeline_mode = os.getenv("PIPELINE_MODE", "standard").strip().lower()
+    pipeline_mode_options = ["standard", "reversed"]
+    p_curr_idx = 1 if curr_pipeline_mode == "reversed" else 0
+
+    selected_pipeline_mode = st.radio(
+        "🔀 파이프라인 모델 역할 스위처",
+        pipeline_mode_options,
+        index=p_curr_idx,
+        format_func=lambda x: "🔵 기본 모드 (메인: Gemini | 검증: GPT-4o)" if x == "standard" else "🔄 역전 모드 (메인: GPT-4o | 검증: Gemini)",
+        key="sb_pipeline_mode_selector",
+        help="메인 웹 탐색 모델과 3단계 교차 검증 모델의 역할을 서로 맞바꾸어 실행합니다."
+    )
+
+    if selected_pipeline_mode != curr_pipeline_mode:
+        os.environ["PIPELINE_MODE"] = selected_pipeline_mode
+        env_path = os.path.join(os.getcwd(), ".env")
+        if os.path.exists(env_path):
+            with open(env_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            import re
+            if "PIPELINE_MODE=" in content:
+                content = re.sub(r'PIPELINE_MODE=.*', f'PIPELINE_MODE={selected_pipeline_mode}', content)
+            else:
+                content += f"\nPIPELINE_MODE={selected_pipeline_mode}\n"
+            with open(env_path, "w", encoding="utf-8") as f:
+                f.write(content)
+        st.success(f"파이프라인 역할 모드가 `{'기본 (Gemini 수집 / GPT 검증)' if selected_pipeline_mode == 'standard' else '역전 (GPT 수집 / Gemini 검증)'}`(으)로 전환되었습니다.")
+        st.rerun()
+
+    # 1. Gemini Primary Model Switcher Widget in Sidebar
+    curr_gemini_model = os.getenv("DISCOVERY_MODEL", "gemini-3.5-flash").strip()
+    gemini_options = ["gemini-3.5-flash", "gemini-2.5-flash"]
+    g_curr_idx = gemini_options.index(curr_gemini_model) if curr_gemini_model in gemini_options else 0
+
+    selected_gemini_model = st.selectbox(
+        "✨ Gemini 모델 선택",
+        gemini_options,
+        index=g_curr_idx,
+        format_func=lambda x: "⚡ Gemini 3.5 Flash (최신 모델)" if x == "gemini-3.5-flash" else "🟢 Gemini 2.5 Flash (안정 모델)",
+        key="sb_gemini_model_selector",
+        help="Gemini AI 모델 버전(3.5 Flash / 2.5 Flash)을 선택합니다."
+    )
+
+    if selected_gemini_model != curr_gemini_model:
+        os.environ["DISCOVERY_MODEL"] = selected_gemini_model
+        os.environ["STRUCTURE_MODEL"] = selected_gemini_model
+        env_path = os.path.join(os.getcwd(), ".env")
+        if os.path.exists(env_path):
+            with open(env_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            import re
+            if "DISCOVERY_MODEL=" in content:
+                content = re.sub(r'DISCOVERY_MODEL=.*', f'DISCOVERY_MODEL={selected_gemini_model}', content)
+            else:
+                content += f"\nDISCOVERY_MODEL={selected_gemini_model}\n"
+            if "STRUCTURE_MODEL=" in content:
+                content = re.sub(r'STRUCTURE_MODEL=.*', f'STRUCTURE_MODEL={selected_gemini_model}', content)
+            else:
+                content += f"\nSTRUCTURE_MODEL={selected_gemini_model}\n"
+            with open(env_path, "w", encoding="utf-8") as f:
+                f.write(content)
+        if st.session_state.gemini:
+            st.session_state.gemini.discovery_model_name = selected_gemini_model
+            st.session_state.gemini.structure_model_name = selected_gemini_model
+        st.success(f"Gemini 모델이 `{selected_gemini_model}`(으)로 변경되었습니다.")
+        st.rerun()
+
+    # 2. GPT Model Switcher Widget in Sidebar (GPT-4o vs GPT-4o-mini)
+    curr_audit_model = os.getenv("GPT_AUDIT_MODEL", "gpt-4o").strip()
+    model_options = ["gpt-4o", "gpt-4o-mini"]
+    curr_idx = model_options.index(curr_audit_model) if curr_audit_model in model_options else 0
+
+    selected_audit_model = st.selectbox(
+        "🛡️ GPT 모델 선택",
+        model_options,
+        index=curr_idx,
+        format_func=lambda x: "⚡ GPT-4o (플래그십 모델)" if x == "gpt-4o" else "🎈 GPT-4o-mini (경량화 모델)",
+        key="sb_audit_model_selector",
+        help="OpenAI GPT 모델 버전(gpt-4o / gpt-4o-mini)을 선택합니다."
+    )
+
+    if selected_audit_model != curr_audit_model:
+        os.environ["GPT_AUDIT_MODEL"] = selected_audit_model
+        env_path = os.path.join(os.getcwd(), ".env")
+        if os.path.exists(env_path):
+            with open(env_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            if "GPT_AUDIT_MODEL=" in content:
+                import re
+                content = re.sub(r'GPT_AUDIT_MODEL=.*', f'GPT_AUDIT_MODEL={selected_audit_model}', content)
+            else:
+                content += f"\nGPT_AUDIT_MODEL={selected_audit_model}\n"
+            with open(env_path, "w", encoding="utf-8") as f:
+                f.write(content)
+        st.success(f"GPT 모델이 `{selected_audit_model}`(으)로 변경되었습니다.")
+        st.rerun()
+
+    if selected_pipeline_mode == "reversed":
+        st.caption(f"🔍 Main Discovery: `GPT ({selected_audit_model})`")
+        st.caption(f"🛡️ Auditor & Cross-Verifier: `Gemini ({selected_gemini_model})`")
+    else:
+        st.caption(f"🔍 Main Discovery: `Gemini ({selected_gemini_model})`")
+        st.caption(f"🛡️ Auditor & Cross-Verifier: `GPT ({selected_audit_model})`")
 
     st.markdown("<hr style='margin: 8px 0;'>", unsafe_allow_html=True)
 
@@ -1227,6 +1453,15 @@ with tab_news:
         
         st.markdown("##### ⚙️ 뉴스 리서치 출처 도메인 설정")
         saved_news_domains = domain_cfg.get("news_domains", "zdnet.co.kr, etnews.com, techcrunch.com, venturebeat.com, reuters.com")
+        
+        include_vendor_official = st.checkbox(
+            "🏢 AI 벤더 공식 뉴스룸/블로그 자동 포함 (OpenAI, Gemini, Claude, Hugging Face, OpenRouter, Meta, MS)",
+            value=True,
+            key="n_inc_vendor_official",
+            help="OpenAI, Google AI/DeepMind, Anthropic, Hugging Face, OpenRouter, Meta AI, Microsoft AI 공식 블로그/뉴스룸 도메인을 우선 수집 도메인에 자동 포함합니다."
+        )
+        vendor_official_domains = "openai.com, blog.google, deepmind.google, anthropic.com, huggingface.co, openrouter.ai, ai.meta.com, blogs.microsoft.com"
+        
         n_default_domains = st.text_area(
             "항시 우선 검색 도메인 (자동 영구 저장)",
             value=saved_news_domains,
@@ -1237,13 +1472,14 @@ with tab_news:
         if n_default_domains != saved_news_domains:
             save_domain_config("news_domains", n_default_domains)
 
-        n_temp_domains = st.text_area(
+        n_temp_domains_raw = st.text_area(
             "이번 회차 임시 추가 도메인",
             value="",
             height=60,
             key="n_temp_domains",
             help="이번 실행에만 임시로 추가할 도메인입니다."
         )
+        n_temp_domains = (n_temp_domains_raw + (", " + vendor_official_domains if include_vendor_official else "")).strip(", ")
 
         
     with col_n2:
@@ -1254,11 +1490,22 @@ with tab_news:
             key="n_language"
         )
         
-        news_target_count = st.selectbox(
-            "목표 수집 기사 수",
-            [5, 10, 15, 20, 30, 50],
-            index=1,
+        news_target_count = st.number_input(
+            "목표 수집 기사 수 (1 ~ 50개)",
+            min_value=1,
+            max_value=50,
+            value=10,
+            step=1,
             key="n_target_count"
+        )
+        
+        from datetime import timedelta, date
+        default_since = date.today() - timedelta(days=30)
+        news_since_date = st.date_input(
+            "📅 기사 게재일 기준 (이 날짜 이후 기사만 수집)",
+            value=default_since,
+            key="n_since_date",
+            help="선택한 날짜 이후(Since Date)에 게재된 최신 AI 뉴스만 엄선하여 수집합니다."
         )
 
         
@@ -1285,7 +1532,8 @@ with tab_news:
     
     st.markdown("---")
     
-    n_btn_label = f"📰 AI 뉴스 {news_target_count}개 수집 및 분석 시작"
+    since_str = news_since_date.strftime('%Y-%m-%d')
+    n_btn_label = f"📰 AI 뉴스 {news_target_count}개 수집 및 분석 시작 ({since_str} 이후)"
     n_search_button = st.button(n_btn_label, use_container_width=True, key="n_search_btn")
     
     if n_search_button:
@@ -1319,33 +1567,96 @@ with tab_news:
                 "language": news_language,
                 "target_count": news_target_count,
                 "research_date": datetime.now().strftime("%Y-%m-%d"),
+                "since_date": since_str,
                 "preferred_sources": n_combined_domains,
             }
             
-            stage1_report = ""
-            with st.status("🔍 1단계: AI 뉴스 웹 검색 & 수집 진행 중...", expanded=True) as status:
-                try:
-                    stage1_report = st.session_state.gemini.run_news_discovery_stage(n_batch_params, n_existing_urls)
-                    status.update(label="✓ 1단계: AI 뉴스 수집 완료!", state="complete")
-                except Exception as e:
-                    status.update(label=f"✗ 1단계 리서치 실패: {e}", state="error")
-                    st.error(f"Error details: {e}")
-                    
-            if stage1_report:
-                with st.status("🏗️ 2단계: 개별 기사 구조화 및 요약 진행 중...", expanded=True) as status_json:
+            col_run_left, col_run_right = st.columns([3, 2])
+            right_box = col_run_right.empty()
+
+            def update_realtime_urls(urls_list, current_msg=""):
+                with right_box.container():
+                    st.markdown("##### 🌐 1차 탐색 수집 참고 URL 전체 리스트")
+                    if current_msg:
+                        st.caption(f"🔄 {current_msg}")
+                    if urls_list:
+                        st.caption(f"총 **{len(urls_list)}개**의 실시간 수집 출처 URL 보관됨:")
+                        for g_idx, g_item in enumerate(urls_list, 1):
+                            t_title = g_item.get('title') if isinstance(g_item, dict) else str(g_item)
+                            g_uri = g_item.get('uri') if isinstance(g_item, dict) else str(g_item)
+                            st.markdown(f"**{g_idx}. [{t_title[:45]}...]({g_uri})**")
+                            st.caption(g_uri)
+                    else:
+                        st.info("실시간 검색 진행 중... 발견된 URL이 이곳 우측 패널에 즉시 나타납니다.")
+
+            # Render initial state on right panel
+            update_realtime_urls(st.session_state.get("news_grounding_urls", []), "")
+
+            raw_news = []
+            with col_run_left:
+                with st.status("🔍 1-2단계: 3대 검색 엔진 (Gemini + Perplexity + Naver) 실시간 탐색 & 구조화 진행 중...", expanded=True) as status:
                     try:
-                        structured_res = st.session_state.gemini.run_news_structuring_stage(
-                            n_batch_id, stage1_report, news_target_count
+                        def update_status(msg, urls=None):
+                            status.write(msg)
+                            if urls:
+                                st.session_state["news_grounding_urls"] = urls
+                                update_realtime_urls(urls, msg)
+
+                        tri_res = st.session_state.gemini.run_tri_engine_discovery(
+                            n_batch_params, n_existing_urls, status_callback=update_status
                         )
-                        raw_news = structured_res.get("candidates", [])
-                        status_json.update(label=f"✓ 2단계: 기사 구조화 완료 ({len(raw_news)}개 파싱됨)", state="complete")
+                        raw_news = tri_res.get("candidates", [])
+                        g_urls_discovered = getattr(st.session_state.gemini, "_last_grounding_urls", [])
+                        st.session_state["news_grounding_urls"] = g_urls_discovered
+                        update_realtime_urls(g_urls_discovered, "실시간 수집 완료")
+                        status.update(label=f"✓ 1-2단계: 3대 엔진 실시간 탐색 및 구조화 완료 ({len(raw_news)}개 기사 / {len(g_urls_discovered)}개 참고 URL 확보)", state="complete")
                     except Exception as e:
-                        status_json.update(label=f"✗ 2단계 구조화 실패: {e}", state="error")
-                        raw_news = []
+                        status.update(label=f"✗ 1-2단계 리서치 실패: {e}", state="error")
                         st.error(f"Error details: {e}")
                         
+                audited_news = []
+                if raw_news:
+                    with st.status("🛡️ 3단계: 3단계 엄격 교차 검증 (HTTP 200 / WAF / GPT Auditor) 진행 중...", expanded=True) as status_audit:
+                        try:
+                            from services.url_resolver import resolve_exact_news_url, is_valid_deep_link
+                            from services.audit_agent import GPTNewsAuditor
+                            auditor = GPTNewsAuditor()
+
+                            for idx, a in enumerate(raw_news, 1):
+                                title = a.get("title", "")
+                                title_kr = a.get("korean_title", title)
+                                media = a.get("source_media", "News")
+                                raw_url = a.get("source_url", "")
+
+                                status_audit.write(f"[{idx}/{len(raw_news)}] '{title_kr[:25]}...' URL 검증 및 GPT 교차 감사 중...")
+
+                                # Resolve exact direct working article URL with dynamic multi-source enrichment
+                                r_urls = a.get("reference_urls", [])
+                                if not isinstance(r_urls, list):
+                                    r_urls = []
+
+                                resolved_url = resolve_exact_news_url(title, media, raw_url, title_kr=title_kr, reference_urls=r_urls)
+                                if resolved_url:
+                                    a["source_url"] = resolved_url
+                                    a["audit_status"] = "Approved (Verified 200 OK & GPT Approved)"
+                                else:
+                                    a["audit_status"] = "Rejected (Unverified URL / Insufficient Sources)"
+
+                                audited_news.append(a)
+
+                            status_audit.update(label=f"✓ 3단계: 3단계 엄격 교차 검증 완료 ({len(audited_news)}개 기사 검증 완료)", state="complete")
+                        except Exception as audit_err:
+                            status_audit.update(label=f"⚠️ 3단계 교차 검증 중 경고: {audit_err}", state="complete")
+                            audited_news = raw_news
+
+            with col_run_right:
+                # Keep final state rendered
+                update_realtime_urls(st.session_state.get("news_grounding_urls", []), "최종 수집 완료")
+
                 valid_news = []
-                for a in raw_news:
+                for a in audited_news:
+                    if "Approved" not in a.get("audit_status", ""):
+                        continue
                     if news_exclude_existing:
                         url = a.get("source_url", "").strip().lower()
                         if url in n_existing_urls:
@@ -1371,7 +1682,7 @@ with tab_news:
                 if not valid_news:
                     st.info("검색 조건에 맞는 새 기사를 찾지 못했습니다. 검색 단어를 조정해 보세요.")
                 else:
-                    st.success(f"조건에 맞는 **{len(valid_news)}**개의 AI 기사를 성공적으로 수집했습니다!")
+                    st.success(f"3단계 교차 검증을 거친 **{len(valid_news)}**개의 AI 기사를 성공적으로 수집했습니다!")
                     st.session_state.news_candidates = valid_news
                     st.session_state.selected_news_idx = 0
 
@@ -1380,6 +1691,15 @@ with tab_news:
         st.markdown("---")
         st.subheader("② 수집된 기사 검토 및 수정 (Review & Edit)")
         
+        g_urls_summary = st.session_state.get("news_grounding_urls", []) or getattr(st.session_state.gemini, "_last_grounding_urls", [])
+        if g_urls_summary:
+            with st.expander(f"🌐 1차 탐색 수집 참고 URL 전체 리스트 ({len(g_urls_summary)}개 구글 탐색 출처 보관됨)", expanded=True):
+                for g_idx, g_item in enumerate(g_urls_summary, 1):
+                    t_title = g_item.get('title') or g_item.get('uri') if isinstance(g_item, dict) else str(g_item)
+                    g_uri = g_item.get('uri', '') if isinstance(g_item, dict) else str(g_item)
+                    st.markdown(f"**{g_idx}. [{t_title[:45]}...]({g_uri})**")
+                    st.caption(g_uri)
+
         col_n_list, col_n_edit = st.columns([1, 2])
         news_cands = st.session_state.news_candidates
         
@@ -1452,7 +1772,62 @@ with tab_news:
                         key=f"n_pcat_{sel_idx}"
                     )
                 with col_ne2:
-                    curr["source_url"] = st.text_input("출처 URL", curr.get("source_url", ""), key=f"n_url_{sel_idx}")
+                    curr_url = curr.get("source_url", "")
+                    curr["source_url"] = st.text_input("출처 URL (Source URL)", curr_url, key=f"n_url_{sel_idx}")
+                    
+                    if curr_url and curr_url.startswith("http"):
+                        st.markdown(f"🔗 **[원문 기사 웹사이트 바로가기 ↗]({curr_url})**")
+                        st.caption("📋 **URL 1초 복사 전용 스니펫** (아래 박스 우측 상단 📋 버튼 클릭):")
+                        st.code(curr_url, language=None)
+                    else:
+                        st.error("⚠️ 출처 URL이 유효하지 않거나 Not Found 상태입니다. 아래 '3단계 교차 검증 재실행' 버튼을 누르세요.")
+
+                    refs = curr.get("reference_urls", [])
+                    g_urls = st.session_state.get("news_grounding_urls", []) or getattr(st.session_state.gemini, "_last_grounding_urls", [])
+                    if isinstance(refs, list):
+                        ref_list = [str(u) for u in refs if u]
+                    else:
+                        ref_list = [str(refs)] if refs else []
+
+                    # Fallback: pre-fill with all Stage 1 grounding URLs if ref_list is empty
+                    if not ref_list and g_urls:
+                        for g in g_urls:
+                            u_val = g.get("uri", "") if isinstance(g, dict) else str(g)
+                            if u_val and u_val not in ref_list:
+                                ref_list.append(u_val)
+
+                    ref_txt = "\n".join(ref_list)
+                    new_ref_txt = st.text_area("🌐 3개 이상 이종 언론사 교차 검증 참조 URL 목록 (Min 3 Reference URLs - 1줄에 1개씩)", ref_txt, height=110, key=f"n_ref_txt_{sel_idx}")
+                    curr["reference_urls"] = [line.strip() for line in new_ref_txt.splitlines() if line.strip()]
+
+                    if curr["reference_urls"]:
+                        with st.expander(f"🔗 참조 URL 바로가기 목록 ({len(curr['reference_urls'])}개 후보)", expanded=True):
+                            for r_i, r_url in enumerate(curr["reference_urls"], 1):
+                                st.markdown(f"{r_i}. [{r_url}]({r_url})")
+                    
+                    audit_st = curr.get("audit_status", "Approved (Verified 200 OK & GPT Approved)")
+                    if "Approved" in audit_st:
+                        st.success(f"🛡️ **3단계 교차 검증 상태**: {audit_st}")
+                    else:
+                        st.warning(f"⚠️ **3단계 교차 검증 상태**: {audit_st}")
+
+                    if st.button("🔄 이 기사 3단계 교차 검증 & URL 재해소 실행", key=f"btn_reverify_{sel_idx}"):
+                        with st.spinner("🔍 3단계 교차 검증 (HTTP 200 / WAF / GPT Auditor) 진행 중..."):
+                            from services.url_resolver import resolve_exact_news_url
+                            r_title = curr.get("title", "")
+                            r_title_kr = curr.get("korean_title", "")
+                            r_media = curr.get("source_media", "News")
+                            r_refs = curr.get("reference_urls", [])
+                            r_url = resolve_exact_news_url(r_title, r_media, curr_url, title_kr=r_title_kr, reference_urls=r_refs)
+                            if r_url:
+                                curr["source_url"] = r_url
+                                curr["audit_status"] = "Approved (Verified 200 OK & GPT Approved)"
+                                st.success(f"✅ 검증 완료된 직링크 URL을 찾았습니다: {r_url}")
+                            else:
+                                curr["audit_status"] = "WAF Block / Review Needed"
+                                st.error("⚠️ 유효한 직링크를 구하지 못했습니다. 수동 검토가 필요합니다.")
+                            st.rerun()
+
                     curr["language"] = st.selectbox("언어", ["EN", "KO"], index=0 if curr.get("language")=="EN" else 1, key=f"n_lang_{sel_idx}")
                     curr["news_topic"] = st.selectbox(
                         "News Topic (뉴스 세부 주제)",

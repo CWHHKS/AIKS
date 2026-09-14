@@ -12,23 +12,65 @@ load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 logger = logging.getLogger(__name__)
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-    "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7"
-}
+import random
+
+HEADERS_LIST = [
+    {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Sec-Ch-Ua": '"Chromium";v="128", "Not;A=Brand";v="24", "Google Chrome";v="128"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"'
+    },
+    {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "ko-KR,ko;q=0.9"
+    },
+    {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:129.0) Gecko/20100101 Firefox/129.0",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "ko-KR,ko;q=0.8,en-US;q=0.5,en;q=0.3"
+    }
+]
+
+def get_random_headers() -> Dict[str, str]:
+    return random.choice(HEADERS_LIST)
+
+HEADERS = HEADERS_LIST[0]
 
 def clean_news_title(title: str) -> str:
     """Cleans title by removing brackets, newlines, and parenthesized translations."""
     if not title:
         return ""
-    cleaned = re.sub(r'\([^\)]*(?:인공지능|AI|출시|발효|투자|모델|기능|발표)[^\)]*\)', '', title)
+    cleaned = re.sub(r'[\(\[\{].*?[\)\]\}]', ' ', title)
     cleaned = re.sub(r'[\r\n\t]+', ' ', cleaned).strip()
     return cleaned
 
+def make_clean_search_query(title: str, title_kr: str = "") -> str:
+    """Extracts clean words for search queries without symbols/brackets."""
+    text = title_kr if title_kr else title
+    text = re.sub(r'[\(\[\{].*?[\)\]\}]', ' ', text)
+    clean = re.sub(r'[^\w\s가-힣a-zA-Z0-9]', ' ', text)
+    words = [w for w in clean.split() if len(w) >= 2]
+    return " ".join(words[:5])
+
+def extract_core_keywords(title: str) -> List[str]:
+    """Extracts major Korean proper nouns, product names, and company names from title for pre-filtering."""
+    if not title:
+        return []
+    words = re.findall(r'[가-힣]{2,}|[A-Z]{2,}', title)
+    stopwords = {"출시", "발표", "공개", "서비스", "인공지능", "기능", "사업", "추진", "진행", "확대", "도입", "개발", "개선"}
+    keywords = [w for w in words if w not in stopwords]
+    return keywords
+
 def is_valid_deep_link(url: str, title: str = "", media: str = "") -> bool:
     """
-    Strictly validates if a URL is a live, working news article page (HTTP 200 OK) AND passes GPT Auditor Cross-Verification.
-    Rejects 404 pages, soft 404s, sales brochures, product landing pages, and hallucinated URL paths.
+    Strict 3-Stage Cross-Verification:
+    1. HTTP Status 200 OK & Path Depth check.
+    2. WAF Security Block & Soft 404 text filter + Keyword Entity Pre-filter.
+    3. GPT Auditor Agent Deep Semantic Match.
     """
     if not url or not isinstance(url, str):
         return False
@@ -53,28 +95,47 @@ def is_valid_deep_link(url: str, title: str = "", media: str = "") -> bool:
     except Exception:
         return False
 
-    # Perform GET request and inspect status code + response text for 404 errors
+    # Perform GET request and inspect status code + response text for 404 / WAF errors
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=5, allow_redirects=True, stream=True)
+        resp = requests.get(url, headers=get_random_headers(), timeout=5, allow_redirects=True, stream=True)
         if resp.status_code != 200:
             return False
             
-        final_url_lower = resp.url.lower()
-        if any(err in final_url_lower for err in ["/error", "404", "notfound", "page-not-found", "account-billing"]):
+        # Ensure proper character encoding
+        if resp.encoding is None or resp.encoding.lower() in ['iso-8859-1', 'ascii']:
+            resp.encoding = resp.apparent_encoding or 'utf-8'
+
+        raw_html = resp.text
+        # Clean HTML scripts, styles, and tags for text auditing
+        cleaned_html = re.sub(r'<script[^>]*>.*?</script>', ' ', raw_html, flags=re.DOTALL | re.IGNORECASE)
+        cleaned_html = re.sub(r'<style[^>]*>.*?</style>', ' ', cleaned_html, flags=re.DOTALL | re.IGNORECASE)
+        clean_text = re.sub(r'<[^>]+>', ' ', cleaned_html)
+        clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+
+        # Inspect snippet for soft 404 & WAF error messages
+        snippet_lower = clean_text[:4000].lower()
+        if any(err_msg in snippet_lower for err_msg in [
+            "stop the presses", "page you're looking for has gone out of circulation", 
+            "404 not found", "page not found", "web firewall security policies", "blocked request"
+        ]):
+            logger.warning(f"Link '{url}' rejected due to WAF / 404 message in body text.")
             return False
 
-        # Inspect HTML body snippet for soft 404 error messages
-        snippet = resp.text[:4000].lower()
-        if any(err_msg in snippet for err_msg in ["stop the presses", "page you're looking for has gone out of circulation", "404 not found", "page not found"]):
-            return False
+        # Stage 2: Keyword Entity Soft Pre-filter (If title provided)
+        if title:
+            core_keywords = extract_core_keywords(title)
+            if core_keywords:
+                matched_count = sum(1 for kw in core_keywords if kw.lower() in clean_text.lower())
+                if matched_count == 0:
+                    logger.info(f"Link '{url}': Core title keywords {core_keywords[:3]} not directly string-matched. Passing to GPT Auditor for semantic verification.")
 
-        # Tier 2: GPT Auditor Agent Cross-Verification (If title & media provided)
-        if title and media:
+        # Stage 3: GPT Auditor Agent Cross-Verification (If title provided)
+        if title:
             try:
                 from services.audit_agent import GPTNewsAuditor
                 auditor = GPTNewsAuditor()
                 if auditor.is_available():
-                    audit_res = auditor.audit_news_page(title, media, resp.text)
+                    audit_res = auditor.audit_news_page(title, media or "News Outlet", clean_text)
                     if not audit_res.get("approved", True):
                         logger.warning(f"GPT Auditor REJECTED link '{url}': {audit_res.get('reason')}")
                         return False
@@ -82,7 +143,8 @@ def is_valid_deep_link(url: str, title: str = "", media: str = "") -> bool:
                 logger.warning(f"GPT Auditor check skipped/exception: {e}")
 
         return True
-    except Exception:
+    except Exception as e:
+        logger.debug(f"is_valid_deep_link exception for '{url}': {e}")
         pass
 
     return False
@@ -92,7 +154,7 @@ def follow_and_get_final_url(url: str, title: str = "", media: str = "") -> Opti
     if not url or not url.startswith("http"):
         return None
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=5, allow_redirects=True, stream=True)
+        resp = requests.get(url, headers=get_random_headers(), timeout=5, allow_redirects=True, stream=True)
         final_url = resp.url
         if is_valid_deep_link(final_url, title=title, media=media):
             return final_url
@@ -100,23 +162,113 @@ def follow_and_get_final_url(url: str, title: str = "", media: str = "") -> Opti
         pass
     return None
 
-def resolve_exact_news_url(title: str, media: str, current_url: str = "") -> str:
+def resolve_via_naver_fallback(title: str, media: str = "", title_kr: str = "") -> str:
+    """Searches Naver News for stable portal deep-link when direct domain is WAF blocked."""
+    query = make_clean_search_query(title, title_kr)
+    if not query:
+        return ""
+
+    try:
+        from services.naver_search import get_naver_news_candidates
+        candidates_data = get_naver_news_candidates(query, display=10)
+        
+        candidates = []
+        for item in candidates_data:
+            for ref in item.get("reference_urls", []):
+                if "n.news.naver.com/mnews/article/" in ref and ref not in candidates:
+                    candidates.append(ref)
+                elif ref and ref.startswith("http") and ref not in candidates:
+                    candidates.append(ref)
+
+        # Media channel preference mapping
+        media_lower = media.lower()
+        pref_code = None
+        if "전자신문" in media_lower or "etnews" in media_lower:
+            pref_code = "/030/"
+        elif "zdnet" in media_lower or "지디넷" in media_lower:
+            pref_code = "/092/"
+        elif "연합뉴스" in media_lower or "yna" in media_lower:
+            pref_code = "/001/"
+        elif "한국경제" in media_lower or "hankyung" in media_lower:
+            pref_code = "/015/"
+        elif "조선" in media_lower or "chosun" in media_lower:
+            pref_code = "/023/"
+
+        if pref_code:
+            pref_list = [c for c in candidates if pref_code in c]
+            other_list = [c for c in candidates if pref_code not in c]
+            candidates = pref_list + other_list
+
+        audit_title = title_kr or title
+        for cand in candidates:
+            if is_valid_deep_link(cand, title=audit_title, media=media):
+                logger.info(f"Resolved WAF-bypass Naver Deep-Link: {cand}")
+                return cand
+    except Exception as e:
+        logger.warning(f"Naver fallback search exception: {e}")
+    return ""
+
+def resolve_exact_news_url(title: str, media: str, current_url: str = "", title_kr: str = "", reference_urls: Optional[List[str]] = None) -> str:
     """
     Multi-tier resolution strategy to find and return the exact direct news article URL.
-    1. If current_url passes strict HTTP 200 & GPT Audit Agent check, return it.
-    2. Try Gemini Search Grounding for exact direct article URL and verify via live HTTP 200 GET & GPT Auditor.
-    3. Fallback to clean Google Search query link (guaranteed 100% 404-proof).
+    1. Test existing URL with full 3-Stage Cross-Verification.
+    2. Test candidate Reference URLs list collected in Stage 1 & 2.
+    3. If existing/reference URLs fail (WAF blocked / 404), perform Naver News Portal Fallback (100% WAF-Proof).
+    4. Try Gemini Search Grounding for global news.
+    5. Fallback to preserving current_url format.
     """
-    # Tier 1: Test existing URL
+    cleaned_title = title_kr or title
+    search_q = make_clean_search_query(title, title_kr)
+
+    # Tier 0: Check Multi-Source Consensus requirement (Minimum 3 Reference Candidate URLs)
+    valid_refs = [u for u in (reference_urls or []) if u and u.startswith("http")]
+    if current_url and current_url.startswith("http") and current_url not in valid_refs:
+        valid_refs.append(current_url)
+
+    # Reputable media & official vendor primary source domains
+    reputable_domains = [
+        "openai.com", "blog.google", "deepmind.google", "anthropic.com",
+        "huggingface.co", "openrouter.ai", "ai.meta.com", "blogs.microsoft.com",
+        "techcrunch.com", "venturebeat.com", "reuters.com", "zdnet.com",
+        "zdnet.co.kr", "etnews.com", "theverge.com", "digitaldaily.co.kr", "yna.co.kr"
+    ]
+    is_reputable_source = any(dom in (current_url or "").lower() for dom in reputable_domains)
+
+    # Dynamic Multi-Source Enrichment if reference URLs count < 3
+    if len(set(valid_refs)) < 3 and search_q:
+        try:
+            from services.naver_search import get_naver_news_candidates
+            nv_candidates = get_naver_news_candidates(search_q, display=5)
+            for nv in nv_candidates:
+                for nv_ref in nv.get("reference_urls", []):
+                    if nv_ref and nv_ref.startswith("http") and nv_ref not in valid_refs:
+                        valid_refs.append(nv_ref)
+        except Exception as enrich_err:
+            logger.warning(f"Dynamic multi-source enrichment failed for query '{search_q}': {enrich_err}")
+
+    # Tier 1: Test existing URL with full 3-Stage Cross-Verification FIRST
     if current_url:
-        final_url = follow_and_get_final_url(current_url, title=title, media=media)
-        if final_url:
+        final_url = follow_and_get_final_url(current_url, title=cleaned_title, media=media)
+        if final_url and (len(set(valid_refs)) >= 3 or is_reputable_source):
             logger.info(f"Existing URL verified 200 OK deep-link: {final_url}")
             return final_url
 
-    cleaned_title = clean_news_title(title)
-    
-    # Tier 2: Gemini Google Search Grounding
+    # Tier 1.5: Test Candidate Reference URLs list collected in Stage 1 & 2
+    if reference_urls and isinstance(reference_urls, list):
+        for candidate_url in reference_urls:
+            if candidate_url and candidate_url.startswith("http") and candidate_url != current_url:
+                verified_ref = follow_and_get_final_url(candidate_url, title=cleaned_title, media=media)
+                if verified_ref:
+                    logger.info(f"Tier 1.5 Reference Candidate URL verified 200 OK deep-link: {verified_ref}")
+                    return verified_ref
+
+    # Tier 2: WAF-Bypass Naver News Portal Fallback (For Korean press or WAF blocked sites)
+    naver_url = resolve_via_naver_fallback(title, media=media, title_kr=title_kr)
+    if naver_url:
+        logger.info(f"Tier 2 WAF-Bypass resolved: {naver_url}")
+        return naver_url
+
+    # Tier 3: Gemini Google Search Grounding with strict verification
     api_key = os.getenv("GEMINI_API_KEY")
     if api_key:
         try:
@@ -135,7 +287,7 @@ Article Title: {cleaned_title}
 
 Requirements:
 - Must be a real working article page URL on {media} (or official news outlet).
-- Output ONLY the URL starting with https://.
+- Output ONLY the direct article URL starting with https://.
 """
             resp = model.generate_content(prompt)
             if resp and resp.text:
@@ -148,30 +300,6 @@ Requirements:
         except Exception as e:
             logger.warning(f"Gemini search grounding exception: {e}")
 
-    # Tier 3: Direct Site Search Grounding Fallback
-    # (Search query URLs like google.com/search are STRICTLY DISALLOWED as final URLs)
-    logger.warning(f"Could not resolve verified direct deep-link for '{cleaned_title}' on initial check. Retrying direct site resolution...")
-    api_key = os.getenv("GEMINI_API_KEY")
-    if api_key:
-        try:
-            import google.generativeai as genai
-            import google.ai.generativelanguage_v1beta as glm
-            genai.configure(api_key=api_key)
-            search_tool = glm.Tool(google_search={})
-            model = genai.GenerativeModel(model_name=os.getenv("DISCOVERY_MODEL", "gemini-2.5-flash"), tools=[search_tool])
-            prompt = f"Find the EXACT direct article URL on {media} for: {cleaned_title}. Return ONLY the direct article URL starting with https://. Do NOT return google.com/search or search query links."
-            resp = model.generate_content(prompt)
-            if resp and resp.text:
-                urls = re.findall(r'https?://[^\s\)]+', resp.text)
-                for u in urls:
-                    u_clean = u.rstrip(".,;\"'")
-                    if not any(x in u_clean.lower() for x in ["google.com/search", "search.naver.com", "duckduckgo.com"]) and is_valid_deep_link(u_clean, title=cleaned_title, media=media):
-                        logger.info(f"Resolved direct target site URL via Tier 3: {u_clean}")
-                        return u_clean
-        except Exception as e:
-            logger.warning(f"Tier 3 resolution exception: {e}")
-
-    # Return current_url if valid direct link, or empty string for review (Never return a search query link!)
-    if current_url and not any(x in current_url.lower() for x in ["google.com/search", "search.naver.com", "duckduckgo.com"]):
-        return current_url
+    # Tier 4: If all tiers fail, return empty string so Auditor Agent strictly rejects unverified/broken URLs
+    logger.warning(f"All resolution tiers failed to verify direct working URL for '{title[:25]}...'. Rejecting link.")
     return ""

@@ -8,6 +8,7 @@ BATCH PARAMETERS
 - Search Language Preference: {language}
 - Target Article Count: {target_count}
 - Research Date: {research_date}
+- Search Articles Published On or After (Since Date): {since_date}
 - Preferred Reference Sites (search these first): {preferred_sources}
 
 PREVIOUSLY COLLECTED URLs (Do NOT return articles with these URLs):
@@ -16,15 +17,18 @@ PREVIOUSLY COLLECTED URLs (Do NOT return articles with these URLs):
 
 RESEARCH INSTRUCTIONS
 
-1. Use current Google Search results to find the most recent, relevant AI news articles.
-2. Search for articles published within the last 30 days unless specified otherwise.
+1. Use current Google Search results to find the MOST RECENT, LATEST AI news articles.
+2. STRICT RECENCY MANDATE: Collect ONLY articles published ON OR AFTER {since_date} (relative to Today {research_date}).
+   - DO NOT return historical articles or outdated news published before {since_date}.
+   - Append recent dates or year filters to your Google Search queries to guarantee fresh, breaking news.
 3. If a "Primary AI Category" is specified, focus on articles about that domain.
 4. If a "News Topic" is specified (e.g., "AI Investment & M&A"), prioritize articles matching that topic.
-5. Search across both English and Korean sources. Prioritize the "Preferred Reference Sites" if provided.
-6. CRITICAL URL INTEGRITY:
-   - Provide the EXACT, LIVE, DIRECT article URL discovered through Google Search.
+5. Search across both English and Korean sources. Prioritize official AI Vendor Blogs and Newsrooms (e.g., openai.com/news, blog.google/technology/ai, deepmind.google/blog, anthropic.com/news, huggingface.co/blog, openrouter.ai/blog, ai.meta.com/blog) as authoritative primary sources alongside major tech media outlets.
+6. CRITICAL MULTI-SOURCE CONSENSUS MANDATE:
+   - For EVERY AI news event, you MUST find and list AT LEAST 3 DIFFERENT MEDIA OUTLET URLs (e.g. ZDNet Korea, ETNews, Digital Daily, Yonhap News, Naver News) covering the exact same headline event.
+   - Do NOT return single-source rumors, blogs, or unverified articles without at least 3 distinct media coverage links in "Reference URLs".
+   - Provide the EXACT, LIVE, DIRECT article URLs discovered through Google Search for all 3+ sources.
    - NEVER fabricate, guess, shorten, or invent URL paths.
-   - The URL must point directly to the individual article page.
 7. Determine "Korea Market Relevance":
    - High: Directly involves Korean companies, Korean government AI policy, or has significant Korea market impact
    - Medium: Global trend that is relevant to Korean AI market
@@ -53,6 +57,7 @@ For each article, provide:
 - Korean Title: (Korean translation of the title if in English, otherwise same as original title)
 - Source Media: (publication name, e.g. TechCrunch, ZDNet Korea, etnews)
 - Source URL: (direct link to article)
+- Reference URLs: (comma-separated list of working candidate reference URLs from search)
 - Published Date: (YYYY-MM-DD format, estimate if not shown)
 - Language: (EN or KO)
 - Primary AI Category: (one of the allowed AI categories)
@@ -65,5 +70,3 @@ For each article, provide:
 - Research Notes: (brief explanation of why this article was selected and its significance, written in Korean)
 
 Separate each article with ---
-
-

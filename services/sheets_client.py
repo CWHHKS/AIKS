@@ -491,6 +491,12 @@ class SheetsClient:
         else:
             title_display = title_orig
 
+        ref_urls = a.get("reference_urls", [])
+        if isinstance(ref_urls, list):
+            ref_urls_str = "\n".join([str(u) for u in ref_urls if u])
+        else:
+            ref_urls_str = str(ref_urls or "")
+
         return [
             idx,
             s(a.get("batch_id", "")),
@@ -499,6 +505,7 @@ class SheetsClient:
             s(title_display),
             s(a.get("source_media", "")),
             s(a.get("source_url", "")),
+            s(ref_urls_str),
             s(a.get("language", "EN")),
             s(a.get("primary_ai_category", "")),
             s(a.get("news_topic", "")),
@@ -522,7 +529,7 @@ class SheetsClient:
 
         news_headers = [
             "No.", "Batch ID", "수집일시", "기사 게재일", "제목",
-            "출처 미디어명", "출처 URL", "언어",
+            "출처 미디어명", "출처 URL", "참조 URL 목록", "언어",
             "Primary AI Category", "News Topic",
             "관련 기업명", "한줄 요약", "10줄 상세 요약", "핵심 키워드",
             "한국 시장 관련성", "Review Status", "Research Notes"

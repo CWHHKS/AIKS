@@ -8,13 +8,25 @@ from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
+def _get_email_setting(key: str, default: str = "") -> str:
+    val = os.getenv(key)
+    if val:
+        return val
+    try:
+        import streamlit as st
+        if key in st.secrets:
+            return str(st.secrets[key])
+    except Exception:
+        pass
+    return default
+
 class EmailService:
     def __init__(self):
-        self.smtp_server = os.getenv("EMAIL_SMTP_SERVER", "smtp.gmail.com")
-        self.smtp_port = int(os.getenv("EMAIL_SMTP_PORT", "465"))
-        self.sender_email = os.getenv("EMAIL_SENDER", "")
-        self.sender_password = os.getenv("EMAIL_PASSWORD", "")
-        self.default_receiver = os.getenv("EMAIL_RECEIVER", "changwan.lim@agichang.ai")
+        self.smtp_server = _get_email_setting("EMAIL_SMTP_SERVER", "smtp.gmail.com")
+        self.smtp_port = int(_get_email_setting("EMAIL_SMTP_PORT", "465"))
+        self.sender_email = _get_email_setting("EMAIL_SENDER", "")
+        self.sender_password = _get_email_setting("EMAIL_PASSWORD", "")
+        self.default_receiver = _get_email_setting("EMAIL_RECEIVER", "changwan.lim@agichang.ai")
 
     def is_configured(self) -> bool:
         return bool(self.sender_email and self.sender_password)
@@ -195,18 +207,23 @@ class EmailService:
         html_body: str,
         to_email: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Sends an email using configured SMTP credentials."""
-        recipient = to_email or self.default_receiver
+        """Sends an email using configured SMTP credentials to single or multiple recipients."""
+        raw_recipient = to_email or self.default_receiver
         if not self.sender_email or not self.sender_password:
             error_msg = "SMTP sender email or password is not configured in environment."
             logger.error(error_msg)
             return {"success": False, "error": error_msg}
 
+        # Parse multiple comma or semicolon separated recipient emails
+        recipients = [addr.strip() for addr in str(raw_recipient).replace(";", ",").split(",") if addr.strip()]
+        if not recipients:
+            return {"success": False, "error": "No valid recipient email address provided."}
+
         try:
             msg = MIMEMultipart("alternative")
             msg["Subject"] = subject
             msg["From"] = f"AIKA News Bot <{self.sender_email}>"
-            msg["To"] = recipient
+            msg["To"] = ", ".join(recipients)
 
             # Attach HTML part
             html_part = MIMEText(html_body, "html", "utf-8")
@@ -216,16 +233,16 @@ class EmailService:
                 # SSL Connection
                 with smtplib.SMTP_SSL(self.smtp_server, self.smtp_port) as server:
                     server.login(self.sender_email, self.sender_password)
-                    server.sendmail(self.sender_email, [recipient], msg.as_string())
+                    server.sendmail(self.sender_email, recipients, msg.as_string())
             else:
                 # TLS Connection (port 587)
                 with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
                     server.starttls()
                     server.login(self.sender_email, self.sender_password)
-                    server.sendmail(self.sender_email, [recipient], msg.as_string())
+                    server.sendmail(self.sender_email, recipients, msg.as_string())
 
-            logger.info(f"Successfully sent daily digest email to {recipient}")
-            return {"success": True, "recipient": recipient}
+            logger.info(f"Successfully sent daily digest email to {len(recipients)} recipient(s): {', '.join(recipients)}")
+            return {"success": True, "recipient": ", ".join(recipients), "count": len(recipients)}
 
         except Exception as e:
             logger.error(f"Failed to send email: {e}")
