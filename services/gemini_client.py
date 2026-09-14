@@ -683,20 +683,56 @@ Use this JSON structure:
             return pooled
 
         # 1. Gemini Grounding Discovery
-        if status_callback:
-            status_callback("🌐 1/3 Gemini Search Grounding 탐색 중...")
-        gemini_raw_report = self.run_news_discovery_stage(batch_params, existing_urls)
-        gemini_result = self.run_news_structuring_stage(
-            batch_params.get("batch_id", ""),
-            gemini_raw_report,
-            target_count=batch_params.get("target_count", 5)
-        )
-        base_candidates = gemini_result.get("candidates", [])
+        enable_gemini = batch_params.get("enable_gemini", True)
+        base_candidates = []
+
+        if enable_gemini:
+            if status_callback:
+                status_callback("🌐 1/3 Gemini Search Grounding 탐색 중...")
+            gemini_raw_report = self.run_news_discovery_stage(batch_params, existing_urls)
+            gemini_result = self.run_news_structuring_stage(
+                batch_params.get("batch_id", ""),
+                gemini_raw_report,
+                target_count=batch_params.get("target_count", 5)
+            )
+            base_candidates = gemini_result.get("candidates", [])
+        else:
+            gemini_result = {"batch_id": batch_params.get("batch_id", ""), "candidates": []}
+
+        # 1.5. RSS Channels (Google News RSS & Direct RSS)
+        try:
+            from services.rss_client import fetch_google_news_rss, fetch_direct_media_rss
+            from datetime import datetime, date
+
+            since_str = batch_params.get("since_date", "")
+            days = 7
+            cutoff_d = None
+            if since_str:
+                try:
+                    cutoff_d = datetime.strptime(since_str, "%Y-%m-%d").date()
+                    days = max(1, (date.today() - cutoff_d).days)
+                except Exception:
+                    days = 7
+
+            if batch_params.get("enable_google_news_rss", True):
+                if status_callback:
+                    status_callback(f"📰 Google News RSS ({days}일 이내) 탐색 중...")
+                q = f"{batch_params.get('primary_category', 'AI')} {batch_params.get('news_topic', 'News')}"
+                g_rss = fetch_google_news_rss(query=q, days=days, max_results=5)
+                base_candidates.extend(g_rss)
+
+            if batch_params.get("enable_direct_rss", True):
+                if status_callback:
+                    status_callback("📡 주요 언론사 직접 RSS 피드 수집 중...")
+                d_rss = fetch_direct_media_rss(cutoff_date=cutoff_d, max_per_feed=2)
+                base_candidates.extend(d_rss)
+        except Exception as rss_err:
+            logger.warning(f"RSS Discovery integration error: {rss_err}")
         
         current_g_urls = getattr(self, "_last_grounding_urls", [])
         urls_step1 = _collect_current_urls(base_candidates, current_g_urls)
         if status_callback:
-            status_callback(f"🌐 1/3 Gemini 탐색 완료 ({len(urls_step1)}개 참고 URL 발견)", urls=urls_step1)
+            status_callback(f"🌐 발견 수집 완료 ({len(urls_step1)}개 참고 URL 확보)", urls=urls_step1)
 
         # 2. Perplexity AI Real-Time Search
         try:

@@ -1493,12 +1493,13 @@ with tab_news:
         )
         
         news_target_count = st.number_input(
-            "목표 수집 기사 수 (1 ~ 50개)",
+            "검색 상한 (1 ~ 50개)",
             min_value=1,
             max_value=50,
             value=10,
             step=1,
-            key="n_target_count"
+            key="n_target_count",
+            help="탐색 시 시도할 최대 기사 수(상한선)입니다. 실제 검증 통과분만 시트에 저장됩니다."
         )
         
         from datetime import timedelta, date
@@ -1524,6 +1525,15 @@ with tab_news:
                 "커스텀 배치 ID (미입력 시 자동생성)",
                 key="n_custom_batch"
             )
+
+        st.markdown("##### 📡 뉴스 탐색 채널 선택 (Discovery Channels)")
+        col_ch1, col_ch2, col_ch3 = st.columns(3)
+        with col_ch1:
+            enable_gemini_ch = st.checkbox("Gemini Grounding", value=True, key="chk_gemini_ch")
+        with col_ch2:
+            enable_gnews_rss_ch = st.checkbox("Google News RSS (when:Nd)", value=True, key="chk_gnews_rss_ch")
+        with col_ch3:
+            enable_direct_rss_ch = st.checkbox("주요 매체 직접 RSS", value=True, key="chk_direct_rss_ch")
 
         render_timer_ui("news", "AI 뉴스")
 
@@ -1571,6 +1581,9 @@ with tab_news:
                 "research_date": datetime.now().strftime("%Y-%m-%d"),
                 "since_date": since_str,
                 "preferred_sources": n_combined_domains,
+                "enable_gemini": enable_gemini_ch,
+                "enable_google_news_rss": enable_gnews_rss_ch,
+                "enable_direct_rss": enable_direct_rss_ch,
             }
             
             col_run_left, col_run_right = st.columns([3, 2])
@@ -1665,7 +1678,16 @@ with tab_news:
                                 except Exception as r_err:
                                     logger.warning(f"Failed to record rejected items to sheet: {r_err}")
 
-                            status_audit.update(label=f"✓ 3단계 검증 완료 (통과 {len(audited_news)}건 / 탈락 {len(rejected_items)}건)", state="complete")
+                            reason_counts = {}
+                            for r in rejected_items:
+                                rs = r["reason"]
+                                reason_counts[rs] = reason_counts.get(rs, 0) + 1
+
+                            rej_summary = " / ".join([f"{k} {v}건" for k, v in reason_counts.items()]) if reason_counts else "없음"
+                            status_audit.update(
+                                label=f"✓ 3단계 검증 완료: 시도 {len(raw_news)}건 → 통과 {len(audited_news)}건 (탈락: {rej_summary})",
+                                state="complete"
+                            )
                         except Exception as audit_err:
                             status_audit.update(label=f"⚠️ 3단계 교차 검증 중 경고: {audit_err}", state="complete")
                             audited_news = raw_news
