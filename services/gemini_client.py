@@ -415,28 +415,34 @@ For "company_summary" and "korea_market_relevance", format the text with logical
                 raise ValueError("Stage 1 received an empty response from Gemini API for news.")
             raw_text = response.text
 
-            # Extract verified grounding metadata URIs directly from Google Search engine
+            # Phase 1: Extract verified grounding metadata URIs directly from Google Search engine
+            import requests
             if response.candidates and hasattr(response.candidates[0], "grounding_metadata"):
                 gm = response.candidates[0].grounding_metadata
                 if hasattr(gm, "grounding_chunks") and gm.grounding_chunks:
+                    seen_uris = set()
                     for chunk in gm.grounding_chunks:
                         if hasattr(chunk, "web") and hasattr(chunk.web, "uri") and chunk.web.uri:
-                            real_grounding_urls.append({
-                                "uri": chunk.web.uri,
-                                "title": getattr(chunk.web, "title", "")
-                            })
-
-            # Regex fallback extraction of all direct HTTPS URLs from Stage 1 raw text
-            import re
-            extracted_uris = re.findall(r'https?://[^\s\)\>\]\'"]+', raw_text)
-            seen_uris = {item["uri"] for item in real_grounding_urls}
-            for uri in extracted_uris:
-                clean_u = uri.rstrip(".,;")
-                if clean_u and clean_u not in seen_uris:
-                    seen_uris.add(clean_u)
-                    real_grounding_urls.append({"uri": clean_u, "title": clean_u})
-
-            logger.info(f"Extracted {len(real_grounding_urls)} verified real URIs from Gemini Search grounding_metadata and text.")
+                            original_uri = chunk.web.uri
+                            title = getattr(chunk.web, "title", "")
+                            try:
+                                # Resolve vertexaisearch redirect URLs
+                                res = requests.get(original_uri, allow_redirects=True, timeout=5, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+                                if res.status_code == 200 and res.url not in seen_uris:
+                                    seen_uris.add(res.url)
+                                    real_grounding_urls.append({
+                                        "uri": res.url,
+                                        "title": title
+                                    })
+                            except Exception as e:
+                                logger.warning(f"Failed to resolve redirect URL {original_uri}: {e}")
+                else:
+                    logger.warning("grounding_metadata is present, but grounding_chunks is empty or missing.")
+            else:
+                logger.warning("grounding_metadata is missing from the Gemini response.")
+            
+            # NOTE: We completely removed regex fallback extraction from raw text to eliminate URL hallucination.
+            logger.info(f"Extracted {len(real_grounding_urls)} verified real URIs from Gemini Search grounding_metadata.")
         except Exception as e:
             logger.warning(f"⚠️ [LLM FAILOVER TRIGGERED] Gemini Discovery API Exception: {e}. Falling back to OpenAI GPT Collector...")
             raw_text = self._fallback_openai_discovery(user_prompt, news_system_prompt)
@@ -475,32 +481,10 @@ For "company_summary" and "korea_market_relevance", format the text with logical
         import re
 
         # -----------------------------------------------------------------
-        # Step A: Extract ground-truth URLs from Stage 1 raw text FIRST.
-        # This regex captures lines like:
-        #   - Source URL: https://...
-        # We build a per-article index so we can map them back after Stage 2.
+        # Step A: DELETED. We no longer extract URLs from Stage 1 text via regex
+        # to prevent URL hallucination. We will rely purely on groundingMetadata.
         # -----------------------------------------------------------------
-        url_pattern = re.compile(
-            r'-\s*Source URL\s*:\s*(https?://[^\s\n\r<"\']+)',
-            re.IGNORECASE
-        )
-        # Split by article boundary to associate URLs with article positions.
-        # Filter to only blocks that contain a real ### Article N header so
-        # any AI preamble text before the first article does not shift indices.
-        article_blocks_raw = re.split(r'(?=###\s*Article\s+\d+)', discovery_report)
-        article_blocks = [
-            b.strip() for b in article_blocks_raw
-            if re.match(r'###\s*Article\s+\d+', b.strip())
-        ]
-
-        # Map: article index (0-based) -> exact URL from Stage 1 text
         ground_truth_urls: Dict[int, str] = {}
-        for idx, block in enumerate(article_blocks):
-            m = url_pattern.search(block)
-            if m:
-                url = m.group(1).strip().rstrip(")")
-                ground_truth_urls[idx] = url
-                logger.info(f"Ground-truth URL [{idx+1}]: {url}")
 
         # -----------------------------------------------------------------
         # Step B: Split into sections and let LLM structure the other fields
@@ -759,6 +743,11 @@ Use this JSON structure:
                 if g_uri and g_uri not in refs:
                     refs.append(g_uri)
             cand["reference_urls"] = refs
+
+        # Enforce target_count: trim merged candidates from all 3 engines to the user-requested limit
+        target_count = batch_params.get("target_count", 5)
+        base_candidates = base_candidates[:target_count]
+        logger.info(f"tri_engine_discovery: trimmed to {len(base_candidates)} candidates (target_count={target_count})")
 
         self._last_grounding_urls = pooled_urls
         gemini_result["candidates"] = base_candidates

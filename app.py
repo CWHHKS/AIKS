@@ -1616,11 +1616,10 @@ with tab_news:
                         
                 audited_news = []
                 if raw_news:
-                    with st.status("🛡️ 3단계: 3단계 엄격 교차 검증 (HTTP 200 / WAF / GPT Auditor) 진행 중...", expanded=True) as status_audit:
+                    with st.status("🛡️ 3단계: URL 정합성 및 게재일/도메인 검증 (validator.py) 진행 중...", expanded=True) as status_audit:
                         try:
-                            from services.url_resolver import resolve_exact_news_url, is_valid_deep_link
-                            from services.audit_agent import GPTNewsAuditor
-                            auditor = GPTNewsAuditor()
+                            from services.validator import validate_article
+                            rejected_items = []
 
                             for idx, a in enumerate(raw_news, 1):
                                 title = a.get("title", "")
@@ -1628,23 +1627,43 @@ with tab_news:
                                 media = a.get("source_media", "News")
                                 raw_url = a.get("source_url", "")
 
-                                status_audit.write(f"[{idx}/{len(raw_news)}] '{title_kr[:25]}...' URL 검증 및 GPT 교차 감사 중...")
+                                status_audit.write(f"[{idx}/{len(raw_news)}] '{title_kr[:25]}...' URL & 게재일 검증 중...")
 
-                                # Resolve exact direct working article URL with dynamic multi-source enrichment
-                                r_urls = a.get("reference_urls", [])
-                                if not isinstance(r_urls, list):
-                                    r_urls = []
+                                v_res = validate_article(
+                                    url=raw_url,
+                                    source_media=media,
+                                    cutoff_date=news_since_date if isinstance(news_since_date, date) else None,
+                                    existing_urls=set(n_existing_urls)
+                                )
 
-                                resolved_url = resolve_exact_news_url(title, media, raw_url, title_kr=title_kr, reference_urls=r_urls)
-                                if resolved_url:
-                                    a["source_url"] = resolved_url
-                                    a["audit_status"] = "Approved (Verified 200 OK & GPT Approved)"
+                                if v_res["passed"]:
+                                    a["source_url"] = v_res["final_url"]
+                                    if v_res["published_at"]:
+                                        a["published_date"] = v_res["published_at"]
+                                    a["audit_status"] = "Approved (Validator Passed)"
+                                    audited_news.append(a)
+                                    status_audit.write(f"  ✅ 통과: 게재일={v_res['published_at']}, URL={v_res['final_url']}")
                                 else:
-                                    a["audit_status"] = "Rejected (Unverified URL / Insufficient Sources)"
+                                    reason = v_res["reason"]
+                                    a["audit_status"] = f"Rejected ({reason})"
+                                    rejected_items.append({
+                                        "collected_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                        "batch_id": n_batch_id,
+                                        "reason": reason,
+                                        "url": raw_url,
+                                        "title": title,
+                                        "discovery_channel": a.get("discovery_channel", "gemini")
+                                    })
+                                    status_audit.write(f"  ❌ 탈락 사유: {reason}")
 
-                                audited_news.append(a)
+                            # Write rejected items to _rejected tab in Google Sheets
+                            if rejected_items and sheets_ok:
+                                try:
+                                    st.session_state.sheets.append_rejected_news(rejected_items)
+                                except Exception as r_err:
+                                    logger.warning(f"Failed to record rejected items to sheet: {r_err}")
 
-                            status_audit.update(label=f"✓ 3단계: 3단계 엄격 교차 검증 완료 ({len(audited_news)}개 기사 검증 완료)", state="complete")
+                            status_audit.update(label=f"✓ 3단계 검증 완료 (통과 {len(audited_news)}건 / 탈락 {len(rejected_items)}건)", state="complete")
                         except Exception as audit_err:
                             status_audit.update(label=f"⚠️ 3단계 교차 검증 중 경고: {audit_err}", state="complete")
                             audited_news = raw_news
