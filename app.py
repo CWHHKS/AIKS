@@ -23,7 +23,7 @@ importlib.reload(services.validator)
 from services.gemini_client import GeminiClient
 from services.sheets_client import SheetsClient
 from services.batch_service import BatchService, CATEGORY_CODES
-from services.validator import validate_article
+from services.validator import validate_article, ALLOWED_CATEGORIES
 from services.scheduler_service import SchedulerService
 
 # Logging config

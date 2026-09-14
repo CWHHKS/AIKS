@@ -16,6 +16,13 @@ HEADERS = {
     "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
 }
 
+# 12 Fixed Primary AI Categories (Phase 4 / Enum)
+ALLOWED_CATEGORIES = {
+    "Generative AI", "AI Agents", "AI Governance", "Data and AI Platform",
+    "AI Security", "Conversational AI", "Developer Tools", "Enterprise Automation",
+    "AI Chips & Hardware", "AI Infrastructure", "Industry AI", "Other"
+}
+
 # Forbidden URL patterns (V4)
 REJECT_PATTERNS = [
     r'namu\.wiki',
