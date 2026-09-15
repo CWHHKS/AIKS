@@ -415,10 +415,12 @@ with st.sidebar:
     sheets_ok = st.session_state.sheets.is_connected()
     sheets_badge = "🟢 Sheets OK" if sheets_ok else "🔴 Sheets Off"
 
+    # 1.5 Auditor Connection Badge
     from services.audit_agent import GPTNewsAuditor
     gpt_auditor = GPTNewsAuditor()
     gpt_ok = gpt_auditor.is_available()
-    gpt_badge = "🟢 GPT Standby OK" if gpt_ok else "🔴 GPT Off"
+    provider_name = gpt_auditor.audit_provider.upper() if hasattr(gpt_auditor, 'audit_provider') else 'AUDITOR'
+    gpt_badge = f"🟢 {provider_name} Standby OK" if gpt_ok else "🔴 Auditor Off"
 
     st.markdown(f'<small>{gemini_badge} | {sheets_badge} | {gpt_badge}</small>', unsafe_allow_html=True)
     st.markdown("<hr style='margin: 8px 0;'>", unsafe_allow_html=True)
@@ -432,7 +434,7 @@ with st.sidebar:
         "🔀 파이프라인 모델 역할 스위처",
         pipeline_mode_options,
         index=p_curr_idx,
-        format_func=lambda x: "🔵 기본 모드 (메인: Gemini | 검증: GPT-4o)" if x == "standard" else "🔄 역전 모드 (메인: GPT-4o | 검증: Gemini)",
+        format_func=lambda x: "🔵 기본 모드 (메인: Gemini | 검증: 선택 검증 모델)" if x == "standard" else "🔄 역전 모드 (메인: GPT-4o | 검증: Gemini)",
         key="sb_pipeline_mode_selector",
         help="메인 웹 탐색 모델과 3단계 교차 검증 모델의 역할을 서로 맞바꾸어 실행합니다."
     )
@@ -450,7 +452,7 @@ with st.sidebar:
                 content += f"\nPIPELINE_MODE={selected_pipeline_mode}\n"
             with open(env_path, "w", encoding="utf-8") as f:
                 f.write(content)
-        st.success(f"파이프라인 역할 모드가 `{'기본 (Gemini 수집 / GPT 검증)' if selected_pipeline_mode == 'standard' else '역전 (GPT 수집 / Gemini 검증)'}`(으)로 전환되었습니다.")
+        st.success(f"파이프라인 역할 모드가 `{'기본 (Gemini 수집 / 선택 검증)' if selected_pipeline_mode == 'standard' else '역전 (GPT 수집 / Gemini 검증)'}`(으)로 전환되었습니다.")
         st.rerun()
 
     # 1. Gemini Primary Model Switcher Widget in Sidebar
@@ -491,41 +493,86 @@ with st.sidebar:
         st.success(f"Gemini 모델이 `{selected_gemini_model}`(으)로 변경되었습니다.")
         st.rerun()
 
-    # 2. GPT Model Switcher Widget in Sidebar (GPT-4o vs GPT-4o-mini)
-    curr_audit_model = os.getenv("GPT_AUDIT_MODEL", "gpt-4o").strip()
-    model_options = ["gpt-4o", "gpt-4o-mini"]
+    # 2. Auditor Model Switcher Widget in Sidebar (Claude vs GPT vs Gemini)
+    model_options = ["claude-sonnet-4-6", "gpt-4o", "gpt-4o-mini", "gemini-2.5-flash"]
+    curr_provider = os.getenv("AUDIT_PROVIDER", "").strip().lower()
+    
+    if curr_provider == "claude":
+        curr_audit_model = os.getenv("CLAUDE_AUDIT_MODEL", "claude-sonnet-4-6").strip()
+    elif curr_provider == "gpt":
+        curr_audit_model = os.getenv("GPT_AUDIT_MODEL", "gpt-4o").strip()
+    elif curr_provider == "gemini":
+        curr_audit_model = "gemini-2.5-flash"
+    else:
+        if os.getenv("ANTHROPIC_API_KEY"):
+            curr_audit_model = os.getenv("CLAUDE_AUDIT_MODEL", "claude-sonnet-4-6").strip()
+        elif os.getenv("OPENAI_API_KEY"):
+            curr_audit_model = os.getenv("GPT_AUDIT_MODEL", "gpt-4o").strip()
+        else:
+            curr_audit_model = "gemini-2.5-flash"
+
     curr_idx = model_options.index(curr_audit_model) if curr_audit_model in model_options else 0
 
+    def format_audit_model(x):
+        if x == "claude-sonnet-4-6":
+            return "🟠 Claude Sonnet 4.6 (Anthropic)"
+        elif x == "gpt-4o":
+            return "⚡ GPT-4o (OpenAI)"
+        elif x == "gpt-4o-mini":
+            return "🎈 GPT-4o-mini (OpenAI)"
+        elif x == "gemini-2.5-flash":
+            return "🟢 Gemini 2.5 Flash (Google)"
+        return x
+
     selected_audit_model = st.selectbox(
-        "🛡️ GPT 모델 선택",
+        "🛡️ 검증 (Auditor) 모델 선택",
         model_options,
         index=curr_idx,
-        format_func=lambda x: "⚡ GPT-4o (플래그십 모델)" if x == "gpt-4o" else "🎈 GPT-4o-mini (경량화 모델)",
+        format_func=format_audit_model,
         key="sb_audit_model_selector",
-        help="OpenAI GPT 모델 버전(gpt-4o / gpt-4o-mini)을 선택합니다."
+        help="팩트 및 출처 3단계 교차 검증에 사용할 AI 모델(Claude / GPT-4o / Gemini)을 선택합니다."
     )
 
     if selected_audit_model != curr_audit_model:
-        os.environ["GPT_AUDIT_MODEL"] = selected_audit_model
         env_path = os.path.join(os.getcwd(), ".env")
-        if os.path.exists(env_path):
-            with open(env_path, "r", encoding="utf-8") as f:
-                content = f.read()
-            if "GPT_AUDIT_MODEL=" in content:
-                import re
-                content = re.sub(r'GPT_AUDIT_MODEL=.*', f'GPT_AUDIT_MODEL={selected_audit_model}', content)
-            else:
-                content += f"\nGPT_AUDIT_MODEL={selected_audit_model}\n"
-            with open(env_path, "w", encoding="utf-8") as f:
-                f.write(content)
-        st.success(f"GPT 모델이 `{selected_audit_model}`(으)로 변경되었습니다.")
+        import re
+        if selected_audit_model.startswith("claude"):
+            os.environ["AUDIT_PROVIDER"] = "claude"
+            os.environ["CLAUDE_AUDIT_MODEL"] = selected_audit_model
+            if os.path.exists(env_path):
+                with open(env_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                content = re.sub(r'AUDIT_PROVIDER=.*', 'AUDIT_PROVIDER=claude', content) if "AUDIT_PROVIDER=" in content else content + "\nAUDIT_PROVIDER=claude\n"
+                content = re.sub(r'CLAUDE_AUDIT_MODEL=.*', f'CLAUDE_AUDIT_MODEL={selected_audit_model}', content) if "CLAUDE_AUDIT_MODEL=" in content else content + f"\nCLAUDE_AUDIT_MODEL={selected_audit_model}\n"
+                with open(env_path, "w", encoding="utf-8") as f:
+                    f.write(content)
+        elif selected_audit_model.startswith("gpt"):
+            os.environ["AUDIT_PROVIDER"] = "gpt"
+            os.environ["GPT_AUDIT_MODEL"] = selected_audit_model
+            if os.path.exists(env_path):
+                with open(env_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                content = re.sub(r'AUDIT_PROVIDER=.*', 'AUDIT_PROVIDER=gpt', content) if "AUDIT_PROVIDER=" in content else content + "\nAUDIT_PROVIDER=gpt\n"
+                content = re.sub(r'GPT_AUDIT_MODEL=.*', f'GPT_AUDIT_MODEL={selected_audit_model}', content) if "GPT_AUDIT_MODEL=" in content else content + f"\nGPT_AUDIT_MODEL={selected_audit_model}\n"
+                with open(env_path, "w", encoding="utf-8") as f:
+                    f.write(content)
+        elif selected_audit_model.startswith("gemini"):
+            os.environ["AUDIT_PROVIDER"] = "gemini"
+            if os.path.exists(env_path):
+                with open(env_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                content = re.sub(r'AUDIT_PROVIDER=.*', 'AUDIT_PROVIDER=gemini', content) if "AUDIT_PROVIDER=" in content else content + "\nAUDIT_PROVIDER=gemini\n"
+                with open(env_path, "w", encoding="utf-8") as f:
+                    f.write(content)
+
+        st.success(f"검증 모델이 `{selected_audit_model}`(으)로 변경되었습니다.")
         st.rerun()
 
     if selected_pipeline_mode == "reversed":
         st.caption(f"🔍 Main Discovery: `GPT ({selected_audit_model})`")
         st.caption(f"🛡️ Auditor & Cross-Verifier: `Gemini ({selected_gemini_model})`")
     else:
-        auditor_label = f"Claude ({getattr(gpt_auditor, 'claude_model_name', 'claude-3-5-sonnet')})" if getattr(gpt_auditor, "claude_client", None) else (f"GPT ({getattr(gpt_auditor, 'gpt_model_name', 'gpt-4o')})" if getattr(gpt_auditor, "client", None) else f"Gemini ({getattr(gpt_auditor, 'gemini_model_name', 'gemini-3.5-flash')})")
+        auditor_label = f"Claude ({getattr(gpt_auditor, 'claude_model_name', 'claude-sonnet-4-6')})" if getattr(gpt_auditor, "claude_client", None) else (f"GPT ({getattr(gpt_auditor, 'gpt_model_name', 'gpt-4o')})" if getattr(gpt_auditor, "client", None) else f"Gemini ({getattr(gpt_auditor, 'gemini_model_name', 'gemini-2.5-flash')})")
         st.caption(f"🔍 Main Discovery: `Gemini ({selected_gemini_model})`")
         st.caption(f"🛡️ Auditor & Cross-Verifier: `{auditor_label}`")
 
