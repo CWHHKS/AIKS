@@ -23,6 +23,17 @@ ALLOWED_CATEGORIES = {
     "AI Chips & Hardware", "AI Infrastructure", "Industry AI", "Other"
 }
 
+def calculate_overfetch_count(target_count: int) -> int:
+    """
+    Calculates candidate discovery count:
+    - If target_count <= 5: target_count + 2 (e.g. 5 -> 7)
+    - If target_count > 5: ceil(target_count * 1.3) (e.g. 10 -> 13)
+    """
+    import math
+    if target_count <= 5:
+        return target_count + 2
+    return math.ceil(target_count * 1.3)
+
 # Forbidden URL patterns (V4)
 REJECT_PATTERNS = [
     r'namu\.wiki',

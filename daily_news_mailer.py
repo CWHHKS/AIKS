@@ -62,42 +62,55 @@ def collect_news(target_count: int = 5, time_label: str = "Evening") -> List[Dic
     if sheets.is_connected() and sheets.news_spreadsheet:
         existing_urls = sheets.get_existing_news_urls()
 
+    from services.validator import calculate_overfetch_count
+    discovery_count = calculate_overfetch_count(target_count)
+    logger.info(f"🔍 [Pipeline Stage 1] Over-fetching {discovery_count} candidates for target {target_count} articles...")
+
     batch_id = f"NEWS-AUTO-{datetime.now().strftime('%Y%m%d%H%M')}"
     batch_params = {
         "batch_id": batch_id,
         "primary_category": "All",
         "news_topic": "All",
         "language": "All (EN + KO)",
-        "target_count": target_count,
+        "target_count": discovery_count,
         "research_date": datetime.now().strftime("%Y-%m-%d"),
         "preferred_sources": "zdnet.co.kr, etnews.com, techcrunch.com, theverge.com, venturebeat.com"
     }
 
     report = gemini.run_news_discovery_stage(batch_params, existing_urls)
-    structured = gemini.run_news_structuring_stage(batch_id, report, target_count)
+    structured = gemini.run_news_structuring_stage(batch_id, report, discovery_count)
     raw_news = structured.get("candidates", [])
 
     from services.url_resolver import resolve_exact_news_url, is_valid_deep_link
 
+    logger.info(f"🛡️ [Pipeline Stage 2] Running 3-Stage Cross-Verification on {len(raw_news)} candidates...")
     valid = []
     for a in raw_news:
+        if len(valid) >= target_count:
+            break
         url = (a.get("source_url") or "").strip()
         title_q = a.get("title") or a.get("korean_title") or "AI News"
         media_q = a.get("source_media", "")
 
-        # Always resolve and ensure exact direct article deep-link
+        # Always resolve and ensure exact direct article deep-link + 3-Stage Auditor verification
         exact_url = resolve_exact_news_url(title_q, media_q, url)
+        if not exact_url:
+            logger.warning(f"Rejected unverified/invalid URL candidate: '{title_q}' ({url})")
+            continue
+
         a["source_url"] = exact_url
         url = exact_url
 
         if url and url.lower() in [u.lower() for u in existing_urls]:
+            logger.info(f"Skipping already existing news URL: {url}")
             continue
+
         a["collected_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         a["review_status"] = "Auto-Collected"
         a["batch_id"] = batch_id
         valid.append(a)
 
-    logger.info(f"✅ Successfully collected {len(valid)} new articles.")
+    logger.info(f"✅ [Pipeline Stage 3] Successfully verified and structured top {len(valid)} target articles (Requested: {target_count}).")
 
     # Save to Google Sheets if connected
     if valid and sheets.is_connected() and sheets.news_spreadsheet:

@@ -1658,7 +1658,7 @@ with tab_news:
 
             raw_news = []
             with col_run_left:
-                with st.status("🔍 1-2단계: 3대 검색 엔진 (Gemini + Perplexity + Naver) 실시간 탐색 & 구조화 진행 중...", expanded=True) as status:
+                with st.status("🔍 1단계: 뉴스 후보 기사 오버패칭 실시간 탐색 중...", expanded=True) as status:
                     try:
                         def update_status(msg, urls=None):
                             status.write(msg)
@@ -1672,15 +1672,15 @@ with tab_news:
                         raw_news = tri_res.get("candidates", [])
                         g_urls_discovered = getattr(st.session_state.gemini, "_last_grounding_urls", [])
                         st.session_state["news_grounding_urls"] = g_urls_discovered
-                        update_realtime_urls(g_urls_discovered, "실시간 수집 완료")
-                        status.update(label=f"✓ 1-2단계: 3대 엔진 실시간 탐색 및 구조화 완료 ({len(raw_news)}개 기사 / {len(g_urls_discovered)}개 참고 URL 확보)", state="complete")
+                        update_realtime_urls(g_urls_discovered, "1차 후보 수집 완료")
+                        status.update(label=f"✓ 1단계: 실시간 후보 탐색 및 2차 교차검증 완료 ({len(raw_news)}개 기사 승인 / {len(g_urls_discovered)}개 참고 URL 확보)", state="complete")
                     except Exception as e:
-                        status.update(label=f"✗ 1-2단계 리서치 실패: {e}", state="error")
+                        status.update(label=f"✗ 1단계 탐색 및 검증 실패: {e}", state="error")
                         st.error(f"Error details: {e}")
                         
                 audited_news = []
                 if raw_news:
-                    with st.status("🛡️ 3단계: URL 정합성 및 게재일/도메인 검증 (validator.py) 진행 중...", expanded=True) as status_audit:
+                    with st.status("🛡️ 2-3단계: URL 정합성 및 최종 검증 (validator.py) 확인 중...", expanded=True) as status_audit:
                         try:
                             from services.validator import validate_article
                             rejected_items = []
@@ -1734,11 +1734,11 @@ with tab_news:
 
                             rej_summary = " / ".join([f"{k} {v}건" for k, v in reason_counts.items()]) if reason_counts else "없음"
                             status_audit.update(
-                                label=f"✓ 3단계 검증 완료: 시도 {len(raw_news)}건 → 통과 {len(audited_news)}건 (탈락: {rej_summary})",
+                                label=f"✓ 최종 검증 완료: 시도 {len(raw_news)}건 → 통과 {len(audited_news)}건 (탈락: {rej_summary})",
                                 state="complete"
                             )
                         except Exception as audit_err:
-                            status_audit.update(label=f"⚠️ 3단계 교차 검증 중 경고: {audit_err}", state="complete")
+                            status_audit.update(label=f"⚠️ 최종 검증 중 경고: {audit_err}", state="complete")
                             audited_news = raw_news
 
             with col_run_right:

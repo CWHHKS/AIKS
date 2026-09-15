@@ -682,18 +682,25 @@ Use this JSON structure:
                         pooled.append({"uri": ref, "title": ref})
             return pooled
 
-        # 1. Gemini Grounding Discovery
+        # 1. Gemini Grounding Discovery with Over-fetching
+        target_count = batch_params.get("target_count", 5)
+        from services.validator import calculate_overfetch_count
+        discovery_count = calculate_overfetch_count(target_count)
+
+        batch_params_overfetch = dict(batch_params)
+        batch_params_overfetch["target_count"] = discovery_count
+
         enable_gemini = batch_params.get("enable_gemini", True)
         base_candidates = []
 
         if enable_gemini:
             if status_callback:
-                status_callback("🌐 1/3 Gemini Search Grounding 탐색 중...")
-            gemini_raw_report = self.run_news_discovery_stage(batch_params, existing_urls)
+                status_callback(f"🌐 1/3 Gemini Search Grounding 탐색 중... ({discovery_count}개 후보 수집)")
+            gemini_raw_report = self.run_news_discovery_stage(batch_params_overfetch, existing_urls)
             gemini_result = self.run_news_structuring_stage(
                 batch_params.get("batch_id", ""),
                 gemini_raw_report,
-                target_count=batch_params.get("target_count", 5)
+                target_count=discovery_count
             )
             base_candidates = gemini_result.get("candidates", [])
         else:
@@ -732,7 +739,7 @@ Use this JSON structure:
         current_g_urls = getattr(self, "_last_grounding_urls", [])
         urls_step1 = _collect_current_urls(base_candidates, current_g_urls)
         if status_callback:
-            status_callback(f"🌐 발견 수집 완료 ({len(urls_step1)}개 참고 URL 확보)", urls=urls_step1)
+            status_callback(f"🌐 1차 후보 탐색 완료 ({len(base_candidates)}개 후보 기사 수집)", urls=urls_step1)
 
         # 2. Perplexity AI Real-Time Search
         try:
@@ -780,10 +787,31 @@ Use this JSON structure:
                     refs.append(g_uri)
             cand["reference_urls"] = refs
 
-        # Enforce target_count: trim merged candidates from all 3 engines to the user-requested limit
-        target_count = batch_params.get("target_count", 5)
-        base_candidates = base_candidates[:target_count]
-        logger.info(f"tri_engine_discovery: trimmed to {len(base_candidates)} candidates (target_count={target_count})")
+        # -----------------------------------------------------------------
+        # Stage 2: 3-Stage Cross Verification & Direct Deep-Link Resolution
+        # -----------------------------------------------------------------
+        if status_callback:
+            status_callback(f"🛡️ [2차 교차검증] 후보 {len(base_candidates)}개 기사 3단계 팩트 검증 중...")
+
+        from services.url_resolver import resolve_exact_news_url
+        verified_candidates = []
+        for cand in base_candidates:
+            if len(verified_candidates) >= target_count:
+                break
+            title_q = cand.get("title") or cand.get("korean_title") or "AI News"
+            media_q = cand.get("source_media", "")
+            url_q = cand.get("source_url", "")
+
+            resolved_url = resolve_exact_news_url(title_q, media_q, url_q)
+            if resolved_url:
+                cand["source_url"] = resolved_url
+                if resolved_url.lower() not in [u.lower() for u in existing_urls]:
+                    verified_candidates.append(cand)
+            else:
+                logger.warning(f"Rejected unverified article during Stage 2: '{title_q}' ({url_q})")
+
+        base_candidates = verified_candidates[:target_count]
+        logger.info(f"tri_engine_discovery: 2nd stage verified & trimmed to {len(base_candidates)} candidates (target_count={target_count})")
 
         self._last_grounding_urls = pooled_urls
         gemini_result["candidates"] = base_candidates
