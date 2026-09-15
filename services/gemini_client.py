@@ -798,11 +798,10 @@ Use this JSON structure:
         for cand in base_candidates:
             if len(verified_candidates) >= target_count:
                 break
-            title_q = cand.get("title") or cand.get("korean_title") or "AI News"
-            media_q = cand.get("source_media", "")
-            url_q = cand.get("source_url", "")
+            title_kr_q = cand.get("korean_title", "")
+            refs_q = cand.get("reference_urls", [])
 
-            resolved_url = resolve_exact_news_url(title_q, media_q, url_q)
+            resolved_url = resolve_exact_news_url(title_q, media_q, url_q, title_kr=title_kr_q, reference_urls=refs_q)
             if resolved_url:
                 cand["source_url"] = resolved_url
                 if resolved_url.lower() not in [u.lower() for u in existing_urls]:

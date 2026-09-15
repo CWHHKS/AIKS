@@ -120,9 +120,9 @@ Evaluation Rules:
    - Set to 'NEWS_ARTICLE' or 'PRESS_RELEASE' if it is a news article, tech blog, or press release.
    - If it is a WAF block message, error page, or 404 page, set to 'ERROR'.
 2. fact_match:
-   - Does the text cover the same or related AI technology topic, company, or industry trend mentioned in the headline?
-   - Be flexible with Korean/English translations, synonyms, and broad industry coverage (e.g. AI agents, LLMs, AI models, enterprise AI).
-   - Only set fact_match to FALSE if the text is completely unrelated (e.g., real estate, sports, cooking, 404 error page).
+   - Does the text cover the AI technology, company, investment, policy, breakthrough, or industry trend mentioned or related to the headline?
+   - Be flexible with Korean/English translations, paraphrased titles, synonyms, and multi-outlet press releases. Do NOT reject an article solely because the media outlet name differs from Expected Media, as long as it is a valid news site covering AI topics.
+   - Only set fact_match to FALSE if the text is completely unrelated (e.g., real estate, local subway construction, sports, cooking, 404 error page).
 3. recency_match:
    - Set to TRUE unless the text is explicitly an old article from 2+ years ago (e.g., 2022/2023).
 4. approved: Set to TRUE if page_type is ('NEWS_ARTICLE' or 'PRESS_RELEASE') AND fact_match is TRUE. Otherwise set to FALSE.
