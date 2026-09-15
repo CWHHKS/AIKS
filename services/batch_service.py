@@ -156,3 +156,33 @@ class BatchService:
                 continue
                 
         return backups
+
+    def get_latest_unreviewed_backup(self, category_type: str) -> Dict[str, Any]:
+        """
+        Returns the most recent backup with status 'Awaiting Review' for the specified category ('news', 'partner', 'vendor').
+        Returns None if no unsaved review-pending backup exists.
+        """
+        search_pattern = os.path.join(self.backup_dir, "*.json")
+        files = glob.glob(search_pattern)
+        files.sort(key=os.path.getmtime, reverse=True)
+
+        for filepath in files:
+            try:
+                with open(filepath, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    status = data.get("status", "")
+                    if status != "Awaiting Review":
+                        continue
+
+                    batch_id = data.get("batch_id", "")
+                    if category_type == "news" and batch_id.startswith("NEWS-"):
+                        return data
+                    elif category_type == "partner" and batch_id.startswith("KP-"):
+                        return data
+                    elif category_type == "vendor" and not batch_id.startswith("NEWS-") and not batch_id.startswith("KP-"):
+                        return data
+            except Exception:
+                continue
+
+        return None
+

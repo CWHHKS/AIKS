@@ -156,15 +156,15 @@ def render_timer_ui(task_name: str, task_title: str):
 
     # Detect change & save
     current_daily_time = daily_times_str.split(",")[0].strip() if daily_times_str else "09:00"
-    if (enabled != cfg.get("enabled") or 
-        mode != cfg.get("mode") or 
-        interval_h != cfg.get("interval_hours") or 
-        daily_count != cfg.get("daily_count") or
-        daily_times_str != cfg.get("daily_times") or
-        email_enabled != cfg.get("email_enabled") or
-        email_send_mode != cfg.get("email_send_mode") or
-        email_dispatch_time != cfg.get("email_dispatch_time") or
-        recipient_email != cfg.get("recipient_email")):
+    if (enabled != cfg.get("enabled", False) or 
+        mode != cfg.get("mode", "interval") or 
+        interval_h != cfg.get("interval_hours", 24) or 
+        daily_count != cfg.get("daily_count", 1) or
+        daily_times_str != cfg.get("daily_times", preset_val if mode == "daily" else "09:00") or
+        email_enabled != cfg.get("email_enabled", False) or
+        email_send_mode != cfg.get("email_send_mode", "immediate") or
+        email_dispatch_time != cfg.get("email_dispatch_time", "08:30, 18:30") or
+        recipient_email != cfg.get("recipient_email", "changwan.lim@agichang.ai")):
         
         new_task_cfg = {
             "enabled": enabled,
@@ -394,6 +394,25 @@ if "news_batch_id" not in st.session_state:
 
 if "saved_status" not in st.session_state:
     st.session_state.saved_status = None
+
+# Auto-restore unsaved 'Awaiting Review' candidates across reruns / tab navigation
+if not st.session_state.candidates:
+    v_unreviewed = st.session_state.batch_service.get_latest_unreviewed_backup("vendor")
+    if v_unreviewed:
+        st.session_state.candidates = v_unreviewed.get("candidates", [])
+        st.session_state.batch_id = v_unreviewed.get("batch_id", "")
+
+if not st.session_state.partner_candidates:
+    p_unreviewed = st.session_state.batch_service.get_latest_unreviewed_backup("partner")
+    if p_unreviewed:
+        st.session_state.partner_candidates = p_unreviewed.get("candidates", [])
+        st.session_state.partner_batch_id = p_unreviewed.get("batch_id", "")
+
+if not st.session_state.news_candidates:
+    n_unreviewed = st.session_state.batch_service.get_latest_unreviewed_backup("news")
+    if n_unreviewed:
+        st.session_state.news_candidates = n_unreviewed.get("candidates", [])
+        st.session_state.news_batch_id = n_unreviewed.get("batch_id", "")
 
 # Helper to refresh Google Sheets status
 def refresh_connections():
