@@ -461,12 +461,12 @@ with st.sidebar:
     g_curr_idx = gemini_options.index(curr_gemini_model) if curr_gemini_model in gemini_options else 0
 
     selected_gemini_model = st.selectbox(
-        "✨ Gemini 모델 선택",
+        "🔍 기사 검색 모델 선택",
         gemini_options,
         index=g_curr_idx,
         format_func=lambda x: "⚡ Gemini 3.5 Flash (최신 모델)" if x == "gemini-3.5-flash" else "🟢 Gemini 2.5 Flash (안정 모델)",
         key="sb_gemini_model_selector",
-        help="Gemini AI 모델 버전(3.5 Flash / 2.5 Flash)을 선택합니다."
+        help="1차 실시간 웹 탐색 및 수집에 사용할 메인 Gemini AI 모델 버전을 선택합니다."
     )
 
     if selected_gemini_model != curr_gemini_model:
