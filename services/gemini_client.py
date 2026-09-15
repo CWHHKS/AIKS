@@ -827,8 +827,10 @@ Use this JSON structure:
         try:
             model = genai.GenerativeModel(self.discovery_model_name)
             response = model.generate_content("hello")
+            self.last_error = None
             return response.text is not None and len(response.text) > 0
         except Exception as e:
+            self.last_error = str(e)
             logger.error(f"Gemini API connection test failed: {str(e)}")
             return False
 

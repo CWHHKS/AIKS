@@ -448,6 +448,8 @@ with st.sidebar:
     gpt_badge = f"🟢 {provider_name} Standby OK" if gpt_ok else "🔴 Auditor Off"
 
     st.markdown(f'<small>{gemini_badge} | {sheets_badge} | {gpt_badge}</small>', unsafe_allow_html=True)
+    if not gemini_ok and st.session_state.gemini and getattr(st.session_state.gemini, "last_error", None):
+        st.caption(f"⚠️ **Gemini 연결 오류**: `{st.session_state.gemini.last_error}`")
     st.markdown("<hr style='margin: 8px 0;'>", unsafe_allow_html=True)
     
     # 0. Pipeline Mode Selector Widget (Standard vs Reversed)
