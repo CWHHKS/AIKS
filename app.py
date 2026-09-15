@@ -297,7 +297,9 @@ st.markdown("""
 # ----------------- AUTHENTICATION MODULE -----------------
 def check_authentication():
     """Renders login form and blocks access until authenticated."""
-    if st.session_state.get("authenticated", False):
+    disable_auth = os.getenv("DISABLE_AUTH", "false").strip().lower() in ["true", "1", "yes"]
+    if disable_auth or st.session_state.get("authenticated", False):
+        st.session_state["authenticated"] = True
         return True
 
     # Hide sidebar during login screen
