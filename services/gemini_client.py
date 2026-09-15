@@ -387,7 +387,7 @@ For "company_summary" and "korea_market_relevance", format the text with logical
             "Your objective is to find, verify, and summarize the latest high-impact AI technology and business news.\n\n"
             "CRITICAL INSTRUCTIONS:\n"
             "1. Ground all findings in real Google Search results.\n"
-            f"2. STRICT RECENCY & CURRENT YEAR ({curr_year}) MANDATE: Always append '{curr_year}' or '{curr_year}년' to your Google Search queries. Search ONLY for fresh breaking news {recency_str}. REJECT and DO NOT RETURN outdated articles from 2024, 2025, or earlier.\n"
+            f"2. STRICT RECENCY MANDATE: Search ONLY for fresh, breaking news {recency_str}. REJECT and DO NOT RETURN outdated articles published before this period.\n"
             "3. MULTI-SOURCE CONSENSUS: For every AI news event, find AT LEAST 3 DIFFERENT MEDIA OUTLETS (e.g. ZDNet Korea, ETNews, Digital Daily, Yonhap News, Naver News) covering the exact same event. List all 3+ URLs under 'Reference URLs'.\n"
             "4. SOURCE URL INTEGRITY: You MUST provide exact, live, working article URLs discovered from search. NEVER invent, guess, or hallucinate URLs.\n"
             "5. If an article is in English, always provide an accurate, natural Korean title translation alongside the original title.\n"

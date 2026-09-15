@@ -17,11 +17,11 @@ PREVIOUSLY COLLECTED URLs (Do NOT return articles with these URLs):
 
 RESEARCH INSTRUCTIONS
 
-1. Use current Google Search results to find the MOST RECENT, LATEST 2026 AI news articles.
-2. STRICT RECENCY & YEAR 2026 MANDATE:
-   - When calling Google Search, ALWAYS append '2026' or '2026년' to your search queries (e.g., 'AI 가전 2026년', 'AI 에이전트 2026년 9월').
-   - Collect ONLY articles published ON OR AFTER {since_date} (Current Year 2026).
-   - STRICTLY REJECT and DO NOT RETURN historical articles or outdated news published in 2024, 2025, or earlier.
+1. Use current Google Search results to find the MOST RECENT, LATEST breaking AI news articles.
+2. STRICT RECENCY MANDATE:
+   - When calling Google Search, search for current breaking news articles published recently.
+   - Collect ONLY fresh, active news articles (relative to Today {research_date}).
+   - REJECT and DO NOT RETURN historical articles or outdated news from several years ago.
 3. If a "Primary AI Category" is specified, focus on articles about that domain.
 4. If a "News Topic" is specified (e.g., "AI Investment & M&A"), prioritize articles matching that topic.
 5. Search across both English and Korean sources. Prioritize official AI Vendor Blogs and Newsrooms (e.g., openai.com/news, blog.google/technology/ai, deepmind.google/blog, anthropic.com/news, huggingface.co/blog, openrouter.ai/blog, ai.meta.com/blog) as authoritative primary sources alongside major tech media outlets.
