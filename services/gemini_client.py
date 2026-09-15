@@ -483,6 +483,7 @@ For "company_summary" and "korea_market_relevance", format the text with logical
         logger.info("Starting Stage 2: News Report JSON Structuring...")
         
         import re
+        ground_truth_urls: Dict[int, str] = {}
 
         # -----------------------------------------------------------------
         # Step B: Split into sections and let LLM structure the other fields
