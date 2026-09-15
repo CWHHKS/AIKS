@@ -2118,9 +2118,9 @@ with tab2:
         else:
             st.info("No local backups found in `data/local_backup/`.")
 
-    # ── 🔍 3단계 교차 검증 및 탈락 분석 로그 섹션 ────────────────────
+    # ── 🔍 2단계 교차검증 및 탈락 분석 로그 섹션 ────────────────────
     st.markdown("---")
-    st.markdown("### 🛡️ 3단계 교차 검증 및 탈락 상세 분석 로그 (Detailed Audit & Rejections Log)")
+    st.markdown("### 🛡️ 2단계 교차검증 및 탈락 상세 분석 로그 (Detailed Audit & Rejections Log)")
 
     all_audit_logs = st.session_state.batch_service.get_all_audit_logs()
     if all_audit_logs:
