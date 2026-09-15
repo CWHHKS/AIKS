@@ -44,7 +44,7 @@ class GPTNewsAuditor:
         else:
             self.audit_provider = "gemini"
 
-        self.claude_model_name = _get_api_key("CLAUDE_AUDIT_MODEL") or "claude-3-5-sonnet-latest"
+        self.claude_model_name = _get_api_key("CLAUDE_AUDIT_MODEL") or "claude-sonnet-4-6"
         self.gpt_model_name = _get_api_key("GPT_AUDIT_MODEL") or "gpt-4o"
         self.gemini_model_name = _get_api_key("DISCOVERY_MODEL") or "gemini-3.5-flash"
 
@@ -150,7 +150,6 @@ Return JSON ONLY in this exact structure:
             response = self.claude_client.messages.create(
                 model=self.claude_model_name,
                 max_tokens=600,
-                temperature=0.0,
                 system="You are a smart, flexible AI news auditor. Approve any legitimate AI news, blog post, or press release related to the target topic. Return JSON ONLY.",
                 messages=[
                     {"role": "user", "content": prompt}
