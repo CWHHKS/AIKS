@@ -23,18 +23,33 @@ def _get_api_key(key: str) -> Optional[str]:
 
 class GPTNewsAuditor:
     """
-    Independent Auditor Agent supporting both OpenAI GPT and Gemini Flash models.
+    Independent Auditor Agent supporting Anthropic Claude 3.5, OpenAI GPT-4o, and Gemini Flash models.
     Performs strict multi-tier cross-verification on parsed news page content:
     1. Page Type Classification (Rejects Product Landings, WAF Blocks, Homepages).
     2. Strict Semantic Fact & Entity Matching (Validates presence of Headline Entities, Product/Company Names, and Core Events).
     """
     def __init__(self):
         self.mode = os.getenv("PIPELINE_MODE", "standard").strip().lower()
+        self.anthropic_key = _get_api_key("ANTHROPIC_API_KEY")
         self.openai_key = _get_api_key("OPENAI_API_KEY")
         self.gemini_key = _get_api_key("GEMINI_API_KEY")
+
+        provider_setting = (_get_api_key("AUDIT_PROVIDER") or "").strip().lower()
+        if provider_setting:
+            self.audit_provider = provider_setting
+        elif self.anthropic_key:
+            self.audit_provider = "claude"
+        elif self.openai_key:
+            self.audit_provider = "gpt"
+        else:
+            self.audit_provider = "gemini"
+
+        self.claude_model_name = _get_api_key("CLAUDE_AUDIT_MODEL") or "claude-3-5-sonnet-latest"
         self.gpt_model_name = _get_api_key("GPT_AUDIT_MODEL") or "gpt-4o"
         self.gemini_model_name = _get_api_key("DISCOVERY_MODEL") or "gemini-3.5-flash"
+
         self.client = None
+        self.claude_client = None
 
         if self.mode == "reversed" and self.gemini_key:
             try:
@@ -44,6 +59,21 @@ class GPTNewsAuditor:
                 logger.info(f"Loaded Gemini Auditor Agent with model: {self.gemini_model_name}")
             except Exception as e:
                 logger.warning(f"Failed to initialize Gemini client for auditing: {e}")
+        elif self.audit_provider in ["claude", "anthropic"] and self.anthropic_key:
+            try:
+                from anthropic import Anthropic
+                self.claude_client = Anthropic(api_key=self.anthropic_key)
+                logger.info(f"Loaded Claude Auditor Agent with model: {self.claude_model_name}")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Anthropic Claude client for auditing: {e}")
+                if self.openai_key:
+                    try:
+                        from openai import OpenAI
+                        self.client = OpenAI(api_key=self.openai_key)
+                        self.audit_provider = "gpt"
+                        logger.info(f"Fallback to GPT Auditor Agent with model: {self.gpt_model_name}")
+                    except Exception as ex:
+                        logger.warning(f"Failed to initialize OpenAI client fallback: {ex}")
         elif self.openai_key:
             try:
                 from openai import OpenAI
@@ -55,7 +85,7 @@ class GPTNewsAuditor:
     def is_available(self) -> bool:
         if self.mode == "reversed":
             return getattr(self, "gemini_genai", None) is not None
-        return self.client is not None
+        return self.claude_client is not None or self.client is not None or getattr(self, "gemini_genai", None) is not None
 
     def audit_news_page(self, title: str, media: str, page_text: str) -> Dict[str, Any]:
         """
@@ -106,10 +136,40 @@ Return JSON ONLY in this exact structure:
   "reason": "Concise explanation of audit result"
 }}
 """
-        if self.mode == "reversed" and getattr(self, "gemini_genai", None):
+        if self.claude_client:
+            return self._audit_with_claude(prompt, title)
+        elif self.mode == "reversed" and getattr(self, "gemini_genai", None):
             return self._audit_with_gemini(prompt, title)
-        
-        return self._audit_with_gpt(prompt, title)
+        elif self.client:
+            return self._audit_with_gpt(prompt, title)
+
+        return {"approved": True, "page_type": "UNAUDITED", "fact_match": True, "reason": "No active auditor client"}
+
+    def _audit_with_claude(self, prompt: str, title: str) -> Dict[str, Any]:
+        try:
+            response = self.claude_client.messages.create(
+                model=self.claude_model_name,
+                max_tokens=600,
+                temperature=0.0,
+                system="You are a smart, flexible AI news auditor. Approve any legitimate AI news, blog post, or press release related to the target topic. Return JSON ONLY.",
+                messages=[
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            raw_text = response.content[0].text.strip()
+            if raw_text.startswith("```"):
+                lines = raw_text.splitlines()
+                if lines[0].startswith("```"):
+                    lines = lines[1:]
+                if lines and lines[-1].strip() == "```":
+                    lines = lines[:-1]
+                raw_text = "\n".join(lines).strip()
+            result = json.loads(raw_text)
+            logger.info(f"Claude Audit Result for '{title[:25]}...': Approved={result.get('approved')} ({result.get('reason')})")
+            return result
+        except Exception as e:
+            logger.error(f"Claude Audit Agent exception: {e}")
+            return {"approved": True, "page_type": "ERROR", "fact_match": True, "reason": f"Claude audit exception: {e}"}
 
     def _audit_with_gpt(self, prompt: str, title: str) -> Dict[str, Any]:
         try:
@@ -135,7 +195,6 @@ Return JSON ONLY in this exact structure:
             model = self.gemini_genai.GenerativeModel(self.gemini_model_name)
             response = model.generate_content(prompt)
             raw_text = response.text.strip()
-            # Clean JSON formatting backticks
             if raw_text.startswith("```"):
                 lines = raw_text.splitlines()
                 if lines[0].startswith("```"):
@@ -149,3 +208,4 @@ Return JSON ONLY in this exact structure:
         except Exception as e:
             logger.error(f"Gemini Audit Agent exception: {e}")
             return {"approved": True, "page_type": "ERROR", "fact_match": True, "reason": f"Audit exception: {e}"}
+

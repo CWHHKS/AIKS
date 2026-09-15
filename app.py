@@ -525,10 +525,12 @@ with st.sidebar:
         st.caption(f"🔍 Main Discovery: `GPT ({selected_audit_model})`")
         st.caption(f"🛡️ Auditor & Cross-Verifier: `Gemini ({selected_gemini_model})`")
     else:
+        auditor_label = f"Claude ({getattr(gpt_auditor, 'claude_model_name', 'claude-3-5-sonnet')})" if getattr(gpt_auditor, "claude_client", None) else (f"GPT ({getattr(gpt_auditor, 'gpt_model_name', 'gpt-4o')})" if getattr(gpt_auditor, "client", None) else f"Gemini ({getattr(gpt_auditor, 'gemini_model_name', 'gemini-3.5-flash')})")
         st.caption(f"🔍 Main Discovery: `Gemini ({selected_gemini_model})`")
-        st.caption(f"🛡️ Auditor & Cross-Verifier: `GPT ({selected_audit_model})`")
+        st.caption(f"🛡️ Auditor & Cross-Verifier: `{auditor_label}`")
 
     st.markdown("<hr style='margin: 8px 0;'>", unsafe_allow_html=True)
+
 
     # 2. Stats Board
     if sheets_ok:
