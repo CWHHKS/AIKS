@@ -411,9 +411,14 @@ For "company_summary" and "korea_market_relevance", format the text with logical
                 tools=[search_tool]
             )
             response = model.generate_content(user_prompt)
-            if not response.text:
-                raise ValueError("Stage 1 received an empty response from Gemini API for news.")
-            raw_text = response.text
+            raw_text = ""
+            if response.candidates and hasattr(response.candidates[0], "content") and response.candidates[0].content and hasattr(response.candidates[0].content, "parts"):
+                raw_text = "\n".join([part.text for part in response.candidates[0].content.parts if hasattr(part, "text") and part.text])
+            elif hasattr(response, "text") and response.text:
+                raw_text = response.text
+
+            if not raw_text.strip():
+                raise ValueError("Stage 1 received an empty text response from Gemini API for news.")
 
             # Phase 1: Extract verified grounding metadata URIs directly from Google Search engine
             import requests
@@ -441,7 +446,6 @@ For "company_summary" and "korea_market_relevance", format the text with logical
             else:
                 logger.warning("grounding_metadata is missing from the Gemini response.")
             
-            # NOTE: We completely removed regex fallback extraction from raw text to eliminate URL hallucination.
             logger.info(f"Extracted {len(real_grounding_urls)} verified real URIs from Gemini Search grounding_metadata.")
         except Exception as e:
             logger.warning(f"⚠️ [LLM FAILOVER TRIGGERED] Gemini Discovery API Exception: {e}. Falling back to OpenAI GPT Collector...")
@@ -481,22 +485,18 @@ For "company_summary" and "korea_market_relevance", format the text with logical
         import re
 
         # -----------------------------------------------------------------
-        # Step A: DELETED. We no longer extract URLs from Stage 1 text via regex
-        # to prevent URL hallucination. We will rely purely on groundingMetadata.
-        # -----------------------------------------------------------------
-        ground_truth_urls: Dict[int, str] = {}
-
-        # -----------------------------------------------------------------
         # Step B: Split into sections and let LLM structure the other fields
         # -----------------------------------------------------------------
         sections = re.split(r'---+\s*(?=### Article)', discovery_report)
         if len(sections) <= 1:
-            sections = re.split(r'(?=### Article)', discovery_report)
+            sections = re.split(r'(?=### Article|###\s*Article|Article\s*\d+)', discovery_report)
+        if len(sections) <= 1:
+            sections = [s.strip() for s in re.split(r'\n\n(?=[#\-\*\d])', discovery_report) if len(s.strip()) > 50]
             
         cleaned_sections = []
         for sec in sections:
             sec_str = sec.strip()
-            if "Title" in sec_str or "title" in sec_str.lower():
+            if len(sec_str) > 30:
                 cleaned_sections.append(sec_str)
                 
         logger.info(f"Split news report into {len(cleaned_sections)} articles for sequential structuring.")
