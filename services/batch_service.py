@@ -89,12 +89,50 @@ class BatchService:
             logger.error(f"Failed to load local backup JSON: {str(e)}")
             raise e
 
+    def save_audit_log(self, batch_id: str, audit_records: List[Dict[str, Any]]) -> str:
+        """Saves detailed cross-verification audit logs to data/audit_logs/."""
+        audit_dir = os.path.join(os.getcwd(), "data", "audit_logs")
+        os.makedirs(audit_dir, exist_ok=True)
+        filepath = os.path.join(audit_dir, f"{batch_id}_audit.json")
+        try:
+            payload = {
+                "batch_id": batch_id,
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "audit_provider": os.getenv("AUDIT_PROVIDER", "claude"),
+                "claude_model": os.getenv("CLAUDE_AUDIT_MODEL", "claude-sonnet-4-6"),
+                "total_records": len(audit_records),
+                "records": audit_records
+            }
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            logger.info(f"Detailed audit log saved to {filepath}")
+            return filepath
+        except Exception as e:
+            logger.error(f"Failed to save audit log: {e}")
+            return ""
+
+    def get_all_audit_logs(self) -> List[Dict[str, Any]]:
+        """Returns all audit log files sorted by date."""
+        audit_dir = os.path.join(os.getcwd(), "data", "audit_logs")
+        if not os.path.exists(audit_dir):
+            return []
+        files = glob.glob(os.path.join(audit_dir, "*_audit.json"))
+        files.sort(key=os.path.getmtime, reverse=True)
+        logs = []
+        for fp in files:
+            try:
+                with open(fp, "r", encoding="utf-8") as f:
+                    logs.append(json.load(f))
+            except Exception:
+                continue
+        return logs
+
     def get_backup_list(self) -> List[Dict[str, str]]:
         """
         Returns a list of all local backups with metadata.
         """
         backups = []
-        search_pattern = os.path.join(self.backup_dir, "GV-*.json")
+        search_pattern = os.path.join(self.backup_dir, "*.json")
         files = glob.glob(search_pattern)
         
         # Sort by creation time (newest first)
@@ -106,9 +144,9 @@ class BatchService:
                     data = json.load(f)
                     backups.append({
                         "batch_id": data.get("batch_id", "Unknown"),
-                        "research_date": data.get("research_date", ""),
-                        "category": data.get("category", ""),
-                        "region": data.get("region", ""),
+                        "research_date": data.get("research_date", data.get("timestamp", "")),
+                        "category": data.get("primary_category", data.get("category", "")),
+                        "region": data.get("region", "Global"),
                         "candidate_count": len(data.get("candidates", [])),
                         "saved_count": len(data.get("saved_candidates", [])),
                         "status": data.get("status", "Backup")

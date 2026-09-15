@@ -1727,6 +1727,21 @@ with tab_news:
                                 except Exception as r_err:
                                     logger.warning(f"Failed to record rejected items to sheet: {r_err}")
 
+                            # Save local audit log file for Tab 4 analysis
+                            try:
+                                all_log_records = rejected_items + [
+                                    {
+                                        "title": a.get("title"),
+                                        "url": a.get("source_url"),
+                                        "media": a.get("source_media"),
+                                        "reason": a.get("audit_status", "Approved"),
+                                        "passed": True
+                                    } for a in audited_news
+                                ]
+                                st.session_state.batch_service.save_audit_log(n_batch_id, all_log_records)
+                            except Exception as log_err:
+                                logger.warning(f"Failed to save local audit log: {log_err}")
+
                             reason_counts = {}
                             for r in rejected_items:
                                 rs = r["reason"]
@@ -2102,4 +2117,38 @@ with tab2:
                 st.info("해당 유형의 로컬 백업이 없습니다.")
         else:
             st.info("No local backups found in `data/local_backup/`.")
+
+    # ── 🔍 3단계 교차 검증 및 탈락 분석 로그 섹션 ────────────────────
+    st.markdown("---")
+    st.markdown("### 🛡️ 3단계 교차 검증 및 탈락 상세 분석 로그 (Detailed Audit & Rejections Log)")
+
+    all_audit_logs = st.session_state.batch_service.get_all_audit_logs()
+    if all_audit_logs:
+        audit_options = [f"{log.get('batch_id')} ({log.get('timestamp')}) - 총 {log.get('total_records', 0)}건 검증 기록" for log in all_audit_logs]
+        selected_log_idx = st.selectbox(
+            "분석 및 복구할 수집 회차(배치 ID) 선택",
+            range(len(audit_options)),
+            format_func=lambda i: audit_options[i],
+            key="sb_audit_log_selector"
+        )
+        
+        sel_log = all_audit_logs[selected_log_idx]
+        st.markdown(f"🤖 **검증엔진**: `{sel_log.get('audit_provider', 'claude').upper()}` (`{sel_log.get('claude_model', 'claude-sonnet-4-6')}`) | 🕒 **실행시각**: `{sel_log.get('timestamp')}`")
+        
+        records = sel_log.get("records", [])
+        if records:
+            df_rec = pd.DataFrame(records)
+            st.dataframe(df_rec, use_container_width=True)
+            
+            # JSON Download button
+            json_str = json.dumps(sel_log, ensure_ascii=False, indent=2)
+            st.download_button(
+                label=f"📥 `{sel_log.get('batch_id')}` 검증 상세 로그 JSON 다운로드",
+                data=json_str,
+                file_name=f"{sel_log.get('batch_id')}_audit_log.json",
+                mime="application/json",
+                key="btn_download_audit_json"
+            )
+    else:
+        st.info("💡 아직 저장된 상세 검증 분석 로그가 없습니다. 뉴스 탐색 실행 시 검증 결과 및 탈락 사유 로그가 이곳 `data/audit_logs/` 폴더에 자동으로 보관되어 언제든지 재분석할 수 있습니다.")
 
