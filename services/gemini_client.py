@@ -799,6 +799,9 @@ Use this JSON structure:
         for cand in base_candidates:
             if len(verified_candidates) >= target_count:
                 break
+            title_q = cand.get("title") or cand.get("korean_title") or "AI News"
+            media_q = cand.get("source_media", "")
+            url_q = cand.get("source_url", "")
             title_kr_q = cand.get("korean_title", "")
             refs_q = cand.get("reference_urls", [])
 
