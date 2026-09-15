@@ -13,12 +13,14 @@ import services.sheets_client
 import services.url_resolver
 import services.audit_agent
 import services.validator
+import services.batch_service
 
 importlib.reload(services.gemini_client)
 importlib.reload(services.sheets_client)
 importlib.reload(services.url_resolver)
 importlib.reload(services.audit_agent)
 importlib.reload(services.validator)
+importlib.reload(services.batch_service)
 
 from services.gemini_client import GeminiClient
 from services.sheets_client import SheetsClient
@@ -359,8 +361,10 @@ if "sheets" not in st.session_state or st.session_state.get("_sheets_version") !
     st.session_state.sheets = SheetsClient()
     st.session_state._sheets_version = _SHEETS_VERSION
 
-if "batch_service" not in st.session_state:
+_BATCH_VERSION = "v2.0-auto-restore"
+if "batch_service" not in st.session_state or st.session_state.get("_batch_version") != _BATCH_VERSION:
     st.session_state.batch_service = BatchService()
+    st.session_state._batch_version = _BATCH_VERSION
 
 if "candidates" not in st.session_state:
     st.session_state.candidates = []
