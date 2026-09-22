@@ -27,7 +27,7 @@ importlib.reload(services.email_service)
 from services.gemini_client import GeminiClient, OperationCancelledException
 from services.sheets_client import SheetsClient
 from services.batch_service import BatchService, CATEGORY_CODES
-from services.validator import validate_article, ALLOWED_CATEGORIES
+from services.validator import validate_article, validate_candidate, ALLOWED_CATEGORIES
 from services.scheduler_service import SchedulerService
 from services.email_service import EmailService
 

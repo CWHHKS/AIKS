@@ -43,8 +43,10 @@ class GeminiClient:
         genai.configure(api_key=self.api_key)
         
         # Model configurations
-        self.discovery_model_name = _get_gemini_setting("DISCOVERY_MODEL", "gemini-2.5-flash")
-        self.structure_model_name = _get_gemini_setting("STRUCTURE_MODEL", "gemini-2.5-flash")
+        raw_discovery = _get_gemini_setting("DISCOVERY_MODEL", "gemini-2.5-flash")
+        raw_structure = _get_gemini_setting("STRUCTURE_MODEL", "gemini-2.5-flash")
+        self.discovery_model_name = raw_discovery if raw_discovery and "perplexity" not in raw_discovery.lower() else "gemini-2.5-flash"
+        self.structure_model_name = raw_structure if raw_structure and "perplexity" not in raw_structure.lower() else "gemini-2.5-flash"
         
         # Load prompt files
         self.system_prompt = self._load_prompt("prompts/vendor_discovery_system.txt")

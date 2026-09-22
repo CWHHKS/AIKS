@@ -8,7 +8,10 @@ import urllib.parse
 import requests
 from bs4 import BeautifulSoup
 
+from services.domain_utils import normalize_domain
+
 logger = logging.getLogger("validator")
+
 
 # Default User-Agent header for HTTP requests
 HEADERS = {
@@ -320,3 +323,166 @@ def validate_article(
     result["passed"] = True
     result["reason"] = "OK"
     return result
+
+
+def sanitize_value_for_sheets(val: Any) -> Any:
+    """
+    Prevents CSV / Google Sheets Formula Injection.
+    Prepends a single quote "'" to string values starting with '=', '+', '-', or '@'.
+    Handles lists by converting them to '|' joined strings first or sanitizing elements.
+    """
+    if isinstance(val, list):
+        joined_str = " | ".join([str(item).strip() for item in val if item is not None])
+        return sanitize_value_for_sheets(joined_str)
+        
+    if isinstance(val, str):
+        val_str = val.strip()
+        if val_str and val_str[0] in ('=', '+', '-', '@'):
+            return f"'{val_str}"
+        return val_str
+        
+    if val is None:
+        return ""
+        
+    return val
+
+
+def validate_url(url: str) -> bool:
+    """
+    Checks if a URL is valid using validators module or urllib fallback.
+    """
+    if not url or not isinstance(url, str):
+        return False
+    url_str = url.strip()
+    try:
+        import validators
+        if validators.url(url_str):
+            return True
+    except Exception:
+        pass
+        
+    parsed = urllib.parse.urlparse(url_str if url_str.startswith(("http://", "https://")) else "https://" + url_str)
+    return bool(parsed.scheme in ("http", "https") and parsed.netloc and "." in parsed.netloc)
+
+
+def validate_candidate(candidate: dict, min_confidence: int = 70) -> dict:
+    """
+    Validates a single AI Vendor candidate.
+    Returns a dict containing:
+        - "is_valid": bool
+        - "errors": list of error message strings
+        - "sanitized_data": dict of sanitized/formatted candidate data
+    """
+    errors = []
+    sanitized = {}
+    
+    # 1. Company Name (Required)
+    name = candidate.get("company_name", "")
+    if isinstance(name, str):
+        name = name.strip()
+    else:
+        name = str(name).strip() if name else ""
+    if not name:
+        errors.append("Company Name is required.")
+    sanitized["company_name"] = sanitize_value_for_sheets(name)
+    
+    # 2. Official Website (Required & Valid URL)
+    website = candidate.get("official_website", "")
+    if isinstance(website, str):
+        website = website.strip()
+    else:
+        website = str(website).strip() if website else ""
+    if not website:
+        errors.append("Official Website is required.")
+    elif not validate_url(website):
+        errors.append(f"Invalid Official Website URL: {website}")
+    sanitized["official_website"] = website
+    
+    # 3. Normalized Domain (Auto-generated/verified)
+    normalized = normalize_domain(website) if website else ""
+    if not normalized:
+        errors.append("Failed to generate normalized domain.")
+    sanitized["normalized_domain"] = normalized
+    
+    # 4. Primary AI Category
+    category = candidate.get("primary_ai_category", "")
+    if isinstance(category, str):
+        category = category.strip()
+    else:
+        category = str(category).strip() if category else ""
+    if not category:
+        errors.append("Primary AI Category is required.")
+    sanitized["primary_ai_category"] = category
+    
+    # 5. Confidence Score (Must be >= min_confidence)
+    try:
+        score = int(candidate.get("confidence_score", 0))
+    except (ValueError, TypeError):
+        score = 0
+    if score < min_confidence:
+        errors.append(f"Confidence score {score} is below the minimum threshold ({min_confidence}).")
+    sanitized["confidence_score"] = score
+    
+    # 6. Recommendation Check
+    rec = candidate.get("aika_recommendation", "")
+    if isinstance(rec, str):
+        rec = rec.strip()
+    else:
+        rec = str(rec).strip() if rec else ""
+    if rec not in ("Strong Candidate", "Candidate", "Strong Partner", "Partner"):
+        if not rec:
+            rec = "Candidate"
+        else:
+            errors.append(f"Recommendation status '{rec}' is not acceptable for sheet storage.")
+    sanitized["aika_recommendation"] = rec
+    
+    # 7. URL checks for evidence
+    evidence = candidate.get("primary_evidence_url", "")
+    if isinstance(evidence, str):
+        evidence = evidence.strip()
+    else:
+        evidence = str(evidence).strip() if evidence else ""
+    if evidence and not validate_url(evidence):
+        errors.append(f"Invalid Primary Evidence URL: {evidence}")
+    sanitized["primary_evidence_url"] = evidence
+    
+    # Sanitize remaining string / list fields
+    sanitized["headquarters_country"] = sanitize_value_for_sheets(candidate.get("headquarters_country", ""))
+    sanitized["main_ai_product"] = sanitize_value_for_sheets(candidate.get("main_ai_product", ""))
+    sanitized["secondary_ai_categories"] = sanitize_value_for_sheets(candidate.get("secondary_ai_categories", []))
+    sanitized["company_summary"] = sanitize_value_for_sheets(candidate.get("company_summary", ""))
+    sanitized["target_customers"] = sanitize_value_for_sheets(candidate.get("target_customers", []))
+    sanitized["target_industries"] = sanitize_value_for_sheets(candidate.get("target_industries", []))
+    sanitized["main_use_cases"] = sanitize_value_for_sheets(candidate.get("main_use_cases", []))
+    sanitized["deployment_type"] = sanitize_value_for_sheets(candidate.get("deployment_type", []))
+    
+    sanitized["official_product_page"] = str(candidate.get("official_product_page", "") or "").strip()
+    sanitized["official_about_page"] = str(candidate.get("official_about_page", "") or "").strip()
+    sanitized["official_contact_page"] = str(candidate.get("official_contact_page", "") or "").strip()
+    
+    sanitized["korea_presence_found"] = sanitize_value_for_sheets(candidate.get("korea_presence_found", "No evidence found"))
+    sanitized["potential_korean_partner_type"] = sanitize_value_for_sheets(candidate.get("potential_korean_partner_type", []))
+    sanitized["korea_market_relevance"] = sanitize_value_for_sheets(candidate.get("korea_market_relevance", ""))
+    
+    sanitized["b2b_product_confirmed"] = sanitize_value_for_sheets(candidate.get("b2b_product_confirmed", "Not publicly confirmed"))
+    sanitized["proprietary_product_confirmed"] = sanitize_value_for_sheets(candidate.get("proprietary_product_confirmed", "Not publicly confirmed"))
+    
+    sanitized["additional_source_urls"] = sanitize_value_for_sheets(candidate.get("additional_source_urls", []))
+    sanitized["review_status"] = str(candidate.get("review_status", "New") or "New").strip()
+    sanitized["processing_status"] = str(candidate.get("processing_status", "Completed") or "Completed").strip()
+    sanitized["research_notes"] = sanitize_value_for_sheets(candidate.get("research_notes", ""))
+    sanitized["batch_id"] = str(candidate.get("batch_id", "") or "").strip()
+    sanitized["research_date"] = str(candidate.get("research_date", "") or "").strip()
+    
+    # Verify optional pages if present
+    for page_key in ("official_product_page", "official_about_page", "official_contact_page"):
+        page_val = sanitized.get(page_key, "")
+        if page_val and not validate_url(page_val):
+            errors.append(f"Invalid URL for {page_key}: {page_val}")
+            
+    return {
+        "is_valid": len(errors) == 0,
+        "errors": errors,
+        "sanitized_data": sanitized
+    }
+
