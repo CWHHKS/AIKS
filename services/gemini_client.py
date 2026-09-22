@@ -699,8 +699,9 @@ Use this JSON structure:
 
                     if not jev_res.get("is_ai_news", True) or not is_date_recent:
                         reason = jev_res.get('filter_reason') if jev_res.get('filter_reason') else f"Published date ({pub_date}) older than 48 hours"
-                        logger.info(f"Article [{i+1}] marked as Filtered (Non-AI / Outdated) by Jev: {reason}")
+                        logger.info(f"Article [{i+1}] EXCLUDED (Non-AI / Outdated) by Jev: {reason}")
                         article["review_status"] = "Filtered (Non-AI)"
+                        continue  # Skip non-AI articles entirely
             except Exception as jev_err:
                 logger.warning(f"Jev classification skipped due to error: {jev_err}")
 
@@ -869,6 +870,38 @@ Use this JSON structure:
             cand["reference_urls"] = refs
 
         # -----------------------------------------------------------------
+        # Stage 1.5: AI-Relevance Pre-Filter (Title Keyword Check)
+        # Removes obviously non-AI articles from RSS/Naver/Perplexity before
+        # expensive URL resolution.
+        # -----------------------------------------------------------------
+        AI_KEYWORDS = [
+            "ai", "인공지능", "llm", "gpt", "생성형", "딥러닝", "머신러닝",
+            "machine learning", "deep learning", "generative", "openai",
+            "claude", "gemini", "copilot", "chatbot", "챗봇", "자율주행",
+            "로봇", "robot", "neural", "transformer", "데이터", "클라우드",
+            "cloud", "사이버", "보안", "security", "자동화", "automation",
+            "algorithm", "알고리즘", "스타트업", "startup", "반도체", "chip",
+            "gpu", "npu", "semiconductor", "model", "모델", "api",
+            "saas", "플랫폼", "platform", "tech", "테크", "소프트웨어",
+            "software", "디지털", "digital", "빅테크", "it", "skt", "네이버",
+            "카카오", "삼성", "lg", "microsoft", "google", "apple", "meta",
+            "amazon", "nvidia", "anthropic", "hugging", "컴퓨팅", "computing"
+        ]
+
+        def _has_ai_relevance(cand_dict):
+            """Quick keyword check on title + summary to filter obviously non-AI content."""
+            title_text = str(cand_dict.get("title") or cand_dict.get("korean_title") or "").lower()
+            summary_text = str(cand_dict.get("rss_description") or cand_dict.get("korean_summary") or "").lower()
+            combined = f"{title_text} {summary_text}"
+            return any(kw in combined for kw in AI_KEYWORDS)
+
+        pre_filter_count = len(base_candidates)
+        base_candidates = [c for c in base_candidates if _has_ai_relevance(c)]
+        filtered_out = pre_filter_count - len(base_candidates)
+        if filtered_out > 0:
+            logger.info(f"AI-relevance pre-filter removed {filtered_out} non-AI candidates (keyword check).")
+
+        # -----------------------------------------------------------------
         # Stage 2: 3-Stage Cross Verification & Direct Deep-Link Resolution
         # -----------------------------------------------------------------
         if status_callback:
@@ -893,7 +926,47 @@ Use this JSON structure:
             else:
                 logger.warning(f"Rejected unverified article during Stage 2: '{title_q}' ({url_q})")
 
-        base_candidates = verified_candidates[:target_count]
+        # -----------------------------------------------------------------
+        # Stage 2.5: Jev (TypeSafe) AI Classification on verified candidates
+        # -----------------------------------------------------------------
+        ai_verified_candidates = []
+        try:
+            from services.typesafe_service import TypeSafeNewsClassifier
+            jev_classifier = TypeSafeNewsClassifier()
+            jev_available = jev_classifier.is_available()
+        except Exception:
+            jev_available = False
+
+        for cand in verified_candidates:
+            if jev_available:
+                try:
+                    title_for_jev = str(cand.get("title") or cand.get("korean_title") or "")
+                    snippet_for_jev = str(cand.get("detailed_summary") or cand.get("korean_summary") or cand.get("rss_description") or "")
+                    jev_res = jev_classifier.evaluate_article(title_for_jev, snippet_for_jev, min_ai_prob_threshold=0.65)
+
+                    cand["jev_ai_prob"] = jev_res.get("ai_probability")
+                    cand["jev_impact_score"] = jev_res.get("impact_score")
+                    cand["target_bucket"] = jev_res.get("target_bucket", "국내 AI 소식")
+                    cand["article_region"] = jev_res.get("article_region", "국내")
+                    cand["article_type"] = jev_res.get("article_type", "소식")
+
+                    if jev_res.get("status") == "success":
+                        cand["primary_ai_category"] = jev_res.get("primary_category")
+                        cand["korea_market_relevance"] = jev_res.get("korea_relevance")
+
+                    pub_date = str(cand.get("published_date", ""))
+                    is_date_recent = self._is_within_48h(pub_date)
+
+                    if not jev_res.get("is_ai_news", True) or not is_date_recent:
+                        reason = jev_res.get('filter_reason') if jev_res.get('filter_reason') else f"Published date ({pub_date}) older than 48 hours"
+                        logger.info(f"tri_engine: EXCLUDED candidate (Non-AI / Outdated) by Jev: '{title_for_jev[:60]}' - {reason}")
+                        continue  # Skip non-AI articles
+                except Exception as jev_err:
+                    logger.warning(f"Jev classification skipped for candidate: {jev_err}")
+
+            ai_verified_candidates.append(cand)
+
+        base_candidates = ai_verified_candidates[:target_count]
         logger.info(f"tri_engine_discovery: 2nd stage verified & trimmed to {len(base_candidates)} candidates (target_count={target_count})")
 
         # -----------------------------------------------------------------

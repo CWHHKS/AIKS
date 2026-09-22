@@ -16,14 +16,12 @@ HEADERS = {
 }
 
 DEFAULT_SOURCES = [
-    {"name": "ZDNet Korea", "url": "https://zdnet.co.kr/news/news_xml.asp"},
-    {"name": "전자신문", "url": "https://rss.etnews.com/Section901.xml"},
+    {"name": "AI타임스", "url": "https://www.aitimes.com/rss/allArticle.xml"},
     {"name": "TechCrunch", "url": "https://techcrunch.com/feed/"},
     {"name": "VentureBeat", "url": "https://venturebeat.com/feed/"},
     {"name": "The Verge", "url": "https://www.theverge.com/rss/index.xml"},
     {"name": "Ars Technica", "url": "https://feeds.arstechnica.com/arstechnica/index"},
     {"name": "Wired", "url": "https://www.wired.com/feed/rss"},
-    {"name": "AI타임스", "url": "https://www.aitimes.com/rss/allArticle.xml"},
     {"name": "디지털데일리", "url": "https://www.ddaily.co.kr/rss/allArticle.xml"}
 ]
 
