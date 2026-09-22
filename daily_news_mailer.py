@@ -74,7 +74,7 @@ def collect_news(target_count: int = 5, time_label: str = "Evening") -> List[Dic
         "language": "All (EN + KO)",
         "target_count": discovery_count,
         "research_date": datetime.now().strftime("%Y-%m-%d"),
-        "preferred_sources": "zdnet.co.kr, etnews.com, techcrunch.com, theverge.com, venturebeat.com"
+        "preferred_sources": "zdnet.co.kr, etnews.com, aitimes.com, aitimes.kr, artificialintelligence-news.com, techcrunch.com, venturebeat.com"
     }
 
     report = gemini.run_news_discovery_stage(batch_params, existing_urls)

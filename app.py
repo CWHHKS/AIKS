@@ -14,6 +14,7 @@ import services.url_resolver
 import services.audit_agent
 import services.validator
 import services.batch_service
+import services.email_service
 
 importlib.reload(services.gemini_client)
 importlib.reload(services.sheets_client)
@@ -21,12 +22,15 @@ importlib.reload(services.url_resolver)
 importlib.reload(services.audit_agent)
 importlib.reload(services.validator)
 importlib.reload(services.batch_service)
+importlib.reload(services.email_service)
 
-from services.gemini_client import GeminiClient
+from services.gemini_client import GeminiClient, OperationCancelledException
 from services.sheets_client import SheetsClient
 from services.batch_service import BatchService, CATEGORY_CODES
 from services.validator import validate_article, ALLOWED_CATEGORIES
 from services.scheduler_service import SchedulerService
+from services.email_service import EmailService
+
 
 # Logging config
 logging.basicConfig(level=logging.INFO)
@@ -431,93 +435,89 @@ with st.sidebar:
     st.markdown("### 🤖 AIKA Connections")
 
     # 1. API Status Badges
+    active_search_model = os.getenv("DISCOVERY_MODEL", "gemini-2.5-flash").strip()
     gemini_ok = False
     if st.session_state.gemini:
-        with st.spinner("Testing Gemini..."):
+        with st.spinner("Testing Connections..."):
             gemini_ok = st.session_state.gemini.test_connection()
 
-    gemini_badge = "🟢 Gemini OK" if gemini_ok else "🔴 Gemini Off"
     sheets_ok = st.session_state.sheets.is_connected()
     sheets_badge = "🟢 Sheets OK" if sheets_ok else "🔴 Sheets Off"
 
-    # 1.5 Auditor Connection Badge
     from services.audit_agent import GPTNewsAuditor
     gpt_auditor = GPTNewsAuditor()
     gpt_ok = gpt_auditor.is_available()
     provider_name = gpt_auditor.audit_provider.upper() if hasattr(gpt_auditor, 'audit_provider') else 'AUDITOR'
-    gpt_badge = f"🟢 {provider_name} Standby OK" if gpt_ok else "🔴 Auditor Off"
+    gpt_badge = f"🟢 {provider_name} OK" if gpt_ok else "🔴 Auditor Off"
 
-    st.markdown(f'<small>{gemini_badge} | {sheets_badge} | {gpt_badge}</small>', unsafe_allow_html=True)
+    from services.perplexity_client import PerplexityNewsClient
+    pplx_client = PerplexityNewsClient()
+    pplx_ok = pplx_client.test_connection()
+
+    # Dynamic Main Search Engine Badge based on user selection
+    if active_search_model == "perplexity-sonar-pro":
+        main_badge = "🔥 Perplexity Sonar Pro OK" if pplx_ok else "🔴 Perplexity Sonar Pro Off"
+    elif active_search_model == "perplexity-sonar":
+        main_badge = "⚡ Perplexity Sonar OK" if pplx_ok else "🔴 Perplexity Sonar Off"
+    elif active_search_model == "gemini-3.5-flash":
+        main_badge = "⚡ Gemini 3.5 Flash OK" if gemini_ok else "🔴 Gemini 3.5 Flash Off"
+    else:
+        main_badge = "🟢 Gemini 2.5 Flash OK" if gemini_ok else "🔴 Gemini 2.5 Flash Off"
+
+    st.markdown(f'<small>{main_badge} | {sheets_badge} | {gpt_badge}</small>', unsafe_allow_html=True)
     if not gemini_ok and st.session_state.gemini and getattr(st.session_state.gemini, "last_error", None):
         st.caption(f"⚠️ **Gemini 연결 오류**: `{st.session_state.gemini.last_error}`")
     st.markdown("<hr style='margin: 8px 0;'>", unsafe_allow_html=True)
     
-    # 0. Pipeline Mode Selector Widget (Standard vs Reversed)
-    curr_pipeline_mode = os.getenv("PIPELINE_MODE", "standard").strip().lower()
-    pipeline_mode_options = ["standard", "reversed"]
-    p_curr_idx = 1 if curr_pipeline_mode == "reversed" else 0
+    # 1. Primary Article Search Model Switcher Widget in Sidebar (Gemini vs Perplexity)
+    curr_discovery_model = os.getenv("DISCOVERY_MODEL", "gemini-2.5-flash").strip()
+    search_model_options = [
+        "gemini-3.5-flash",
+        "gemini-2.5-flash",
+        "perplexity-sonar",
+        "perplexity-sonar-pro"
+    ]
+    s_curr_idx = search_model_options.index(curr_discovery_model) if curr_discovery_model in search_model_options else 1
 
-    selected_pipeline_mode = st.radio(
-        "🔀 파이프라인 모델 역할 스위처",
-        pipeline_mode_options,
-        index=p_curr_idx,
-        format_func=lambda x: "🔵 기본 모드 (메인: Gemini | 검증: 선택 검증 모델)" if x == "standard" else "🔄 역전 모드 (메인: GPT-4o | 검증: Gemini)",
-        key="sb_pipeline_mode_selector",
-        help="메인 웹 탐색 모델과 3단계 교차 검증 모델의 역할을 서로 맞바꾸어 실행합니다."
-    )
+    def format_search_model(m):
+        if m == "gemini-3.5-flash":
+            return "⚡ Gemini 3.5 Flash (최신 모델)"
+        elif m == "gemini-2.5-flash":
+            return "🟢 Gemini 2.5 Flash (안정 모델)"
+        elif m == "perplexity-sonar":
+            return "⚡ Perplexity Sonar (표준 가성비 모델)"
+        elif m == "perplexity-sonar-pro":
+            return "🔥 Perplexity Sonar Pro (고성능 정밀 모델)"
+        return m
 
-    if selected_pipeline_mode != curr_pipeline_mode:
-        os.environ["PIPELINE_MODE"] = selected_pipeline_mode
-        env_path = os.path.join(os.getcwd(), ".env")
-        if os.path.exists(env_path):
-            with open(env_path, "r", encoding="utf-8") as f:
-                content = f.read()
-            import re
-            if "PIPELINE_MODE=" in content:
-                content = re.sub(r'PIPELINE_MODE=.*', f'PIPELINE_MODE={selected_pipeline_mode}', content)
-            else:
-                content += f"\nPIPELINE_MODE={selected_pipeline_mode}\n"
-            with open(env_path, "w", encoding="utf-8") as f:
-                f.write(content)
-        st.success(f"파이프라인 역할 모드가 `{'기본 (Gemini 수집 / 선택 검증)' if selected_pipeline_mode == 'standard' else '역전 (GPT 수집 / Gemini 검증)'}`(으)로 전환되었습니다.")
-        st.rerun()
-
-    # 1. Gemini Primary Model Switcher Widget in Sidebar
-    curr_gemini_model = os.getenv("DISCOVERY_MODEL", "gemini-3.5-flash").strip()
-    gemini_options = ["gemini-3.5-flash", "gemini-2.5-flash"]
-    g_curr_idx = gemini_options.index(curr_gemini_model) if curr_gemini_model in gemini_options else 0
-
-    selected_gemini_model = st.selectbox(
+    selected_search_model = st.selectbox(
         "🔍 기사 검색 모델 선택",
-        gemini_options,
-        index=g_curr_idx,
-        format_func=lambda x: "⚡ Gemini 3.5 Flash (최신 모델)" if x == "gemini-3.5-flash" else "🟢 Gemini 2.5 Flash (안정 모델)",
-        key="sb_gemini_model_selector",
-        help="1차 실시간 웹 탐색 및 수집에 사용할 메인 Gemini AI 모델 버전을 선택합니다."
+        search_model_options,
+        index=s_curr_idx,
+        format_func=format_search_model,
+        key="sb_search_model_selector",
+        help="1차 실시간 웹 탐색 및 기사 수집에 사용할 메인 AI 검색 모델을 선택합니다."
     )
 
-    if selected_gemini_model != curr_gemini_model:
-        os.environ["DISCOVERY_MODEL"] = selected_gemini_model
-        os.environ["STRUCTURE_MODEL"] = selected_gemini_model
+    if selected_search_model != curr_discovery_model:
+        os.environ["DISCOVERY_MODEL"] = selected_search_model
+        if "perplexity" not in selected_search_model:
+            os.environ["STRUCTURE_MODEL"] = selected_search_model
         env_path = os.path.join(os.getcwd(), ".env")
         if os.path.exists(env_path):
             with open(env_path, "r", encoding="utf-8") as f:
                 content = f.read()
             import re
             if "DISCOVERY_MODEL=" in content:
-                content = re.sub(r'DISCOVERY_MODEL=.*', f'DISCOVERY_MODEL={selected_gemini_model}', content)
+                content = re.sub(r'DISCOVERY_MODEL=.*', f'DISCOVERY_MODEL={selected_search_model}', content)
             else:
-                content += f"\nDISCOVERY_MODEL={selected_gemini_model}\n"
-            if "STRUCTURE_MODEL=" in content:
-                content = re.sub(r'STRUCTURE_MODEL=.*', f'STRUCTURE_MODEL={selected_gemini_model}', content)
-            else:
-                content += f"\nSTRUCTURE_MODEL={selected_gemini_model}\n"
+                content += f"\nDISCOVERY_MODEL={selected_search_model}\n"
             with open(env_path, "w", encoding="utf-8") as f:
                 f.write(content)
-        if st.session_state.gemini:
-            st.session_state.gemini.discovery_model_name = selected_gemini_model
-            st.session_state.gemini.structure_model_name = selected_gemini_model
-        st.success(f"Gemini 모델이 `{selected_gemini_model}`(으)로 변경되었습니다.")
+        if st.session_state.gemini and "perplexity" not in selected_search_model:
+            st.session_state.gemini.discovery_model_name = selected_search_model
+            st.session_state.gemini.structure_model_name = selected_search_model
+        st.success(f"기사 검색 모델이 `{format_search_model(selected_search_model)}`(으)로 변경되었습니다.")
         st.rerun()
 
     # 2. Auditor Model Switcher Widget in Sidebar (Claude vs GPT vs Gemini)
@@ -595,13 +595,9 @@ with st.sidebar:
         st.success(f"검증 모델이 `{selected_audit_model}`(으)로 변경되었습니다.")
         st.rerun()
 
-    if selected_pipeline_mode == "reversed":
-        st.caption(f"🔍 Main Discovery: `GPT ({selected_audit_model})`")
-        st.caption(f"🛡️ Auditor & Cross-Verifier: `Gemini ({selected_gemini_model})`")
-    else:
-        auditor_label = f"Claude ({getattr(gpt_auditor, 'claude_model_name', 'claude-sonnet-4-6')})" if getattr(gpt_auditor, "claude_client", None) else (f"GPT ({getattr(gpt_auditor, 'gpt_model_name', 'gpt-4o')})" if getattr(gpt_auditor, "client", None) else f"Gemini ({getattr(gpt_auditor, 'gemini_model_name', 'gemini-2.5-flash')})")
-        st.caption(f"🔍 Main Discovery: `Gemini ({selected_gemini_model})`")
-        st.caption(f"🛡️ Auditor & Cross-Verifier: `{auditor_label}`")
+    auditor_label = f"Claude ({getattr(gpt_auditor, 'claude_model_name', 'claude-sonnet-4-6')})" if getattr(gpt_auditor, "claude_client", None) else (f"GPT ({getattr(gpt_auditor, 'gpt_model_name', 'gpt-4o')})" if getattr(gpt_auditor, "client", None) else f"Gemini ({getattr(gpt_auditor, 'gemini_model_name', 'gemini-2.5-flash')})")
+    st.caption(f"🔍 Main Discovery: `{format_search_model(selected_search_model)}`")
+    st.caption(f"🛡️ Auditor & Cross-Verifier: `{auditor_label}`")
 
     st.markdown("<hr style='margin: 8px 0;'>", unsafe_allow_html=True)
 
@@ -904,6 +900,9 @@ with tab1:
         cands = st.session_state.candidates
         
         # Initialize checkbox states in st.session_state if not present
+        if "select_all" not in st.session_state:
+            st.session_state["select_all"] = True
+
         for idx, c in enumerate(cands):
             key = f"chk_save_{idx}"
             if key not in st.session_state:
@@ -911,7 +910,7 @@ with tab1:
         
         # Callback for Select All checkbox
         def on_select_all_change():
-            val = st.session_state.select_all
+            val = st.session_state.get("select_all", True)
             for idx in range(len(cands)):
                 st.session_state[f"chk_save_{idx}"] = val
         
@@ -1315,13 +1314,16 @@ with tab_partner:
         partner_cands = st.session_state.partner_candidates
         
         # Initialize checkbox states
+        if "partner_select_all" not in st.session_state:
+            st.session_state["partner_select_all"] = True
+
         for idx, c in enumerate(partner_cands):
             p_key = f"chk_partner_save_{idx}"
             if p_key not in st.session_state:
                 st.session_state[p_key] = c.get("save_to_sheet", True)
                 
         def on_partner_select_all_change():
-            val = st.session_state.partner_select_all
+            val = st.session_state.get("partner_select_all", True)
             for idx in range(len(partner_cands)):
                 st.session_state[f"chk_partner_save_{idx}"] = val
                 
@@ -1530,7 +1532,7 @@ with tab_news:
         )
         
         st.markdown("##### ⚙️ 뉴스 리서치 출처 도메인 설정")
-        saved_news_domains = domain_cfg.get("news_domains", "zdnet.co.kr, etnews.com, techcrunch.com, venturebeat.com, reuters.com")
+        saved_news_domains = domain_cfg.get("news_domains", "zdnet.co.kr, etnews.com, aitimes.com, aitimes.kr, artificialintelligence-news.com, techcrunch.com, venturebeat.com, reuters.com")
         
         include_vendor_official = st.checkbox(
             "🏢 AI 벤더 공식 뉴스룸/블로그 자동 포함 (OpenAI, Gemini, Claude, Hugging Face, OpenRouter, Meta, MS)",
@@ -1579,13 +1581,147 @@ with tab_news:
         )
         
         from datetime import timedelta, date
-        default_since = date.today() - timedelta(days=30)
+        default_since = date.today()
         news_since_date = st.date_input(
             "📅 기사 게재일 기준 (이 날짜 이후 기사만 수집)",
             value=default_since,
             key="n_since_date",
             help="선택한 날짜 이후(Since Date)에 게재된 최신 AI 뉴스만 엄선하여 수집합니다."
         )
+
+        # 📧 SHEET NEWS EMAIL MAILER SECTION (기사 게재일 기준 바로 아래 배치)
+        with st.expander("📧 구글 시트 저장 뉴스 이메일 발송 (Sheet Article Mailer)", expanded=False):
+            st.markdown("##### 📩 구글 시트에 저장된 뉴스 기사를 추출하여 이메일 레포트로 즉시 발송")
+            from services.email_service import EmailService
+            email_svc = EmailService()
+            default_rcv = email_svc.default_receiver or "changwan.lim@agichang.ai"
+
+            m_col_e1, m_col_e2 = st.columns(2)
+            with m_col_e1:
+                em_receiver = st.text_input(
+                    "수신 이메일 주소 (콤마 구분 다수 가능)",
+                    value=default_rcv,
+                    key="em_receiver_input",
+                    help="고급 설정에 등록된 기본 수신자 주소가 적용되며, 여러 명일 경우 콤마(,)로 구분하세요."
+                )
+                em_extract_mode = st.selectbox(
+                    "기사 추출 방식 선택 (Extraction Method)",
+                    [
+                        "1. 행 번호 범위 지정 (예: 117 ~ 124)",
+                        "2. 수집 회차(배치 ID) 선택",
+                        "3. 기사 게재일 기준 선택",
+                        "4. 구글 시트 최근 기사에서 직접 선택 (Checklist)"
+                    ],
+                    index=0,
+                    key="em_extract_mode"
+                )
+
+            with m_col_e2:
+                em_subject = st.text_input(
+                    "이메일 제목 (미입력 시 자동 생성)",
+                    value="",
+                    key="em_subject_input",
+                    help="미입력 시 '[AI 뉴스 브리핑] YYYY-MM-DD 주요 AI 기술 및 시장 동향'으로 발송됩니다."
+                )
+
+                selected_sheet_articles = []
+                if "1. 행 번호 범위" in em_extract_mode:
+                    em_r1, em_r2 = st.columns(2)
+                    with em_r1:
+                        em_start_no = st.number_input("시작 번호 (No.)", min_value=1, value=1, step=1, key="em_start_no")
+                    with em_r2:
+                        em_end_no = st.number_input("끝 번호 (No.)", min_value=1, value=10, step=1, key="em_end_no")
+                elif "2. 수집 회차" in em_extract_mode:
+                    recent_b_list = []
+                    if sheets_ok:
+                        recent_batches = st.session_state.sheets.get_recent_batches(limit=30)
+                        recent_b_list = [b[1] for b in recent_batches if b[1].startswith("NEWS-")]
+                    if not recent_b_list:
+                        recent_b_list = ["저장된 NEWS 배치 없음"]
+                    em_batch_id = st.selectbox("발송할 뉴스 배치 ID 선택", recent_b_list, index=0, key="em_batch_id")
+                elif "3. 기사 게재일" in em_extract_mode:
+                    em_target_date = st.date_input("발송 대상 기사 날짜", value=date.today(), key="em_target_date")
+                elif "4. 구글 시트 최근 기사" in em_extract_mode:
+                    st.caption("아래 목록에서 이메일로 보낼 기사를 직접 선택하세요.")
+
+            # Extraction and Preview Logic
+            if "4. 구글 시트 최근 기사" in em_extract_mode:
+                if sheets_ok:
+                    recent_arts = st.session_state.sheets.get_recent_news_articles(limit=15)
+                    if recent_arts:
+                        st.markdown("##### 📋 최근 구글 시트 저장 기사 선택 (최대 15개)")
+                        selected_sheet_articles = []
+                        for r_idx, r_art in enumerate(recent_arts):
+                            r_chk_key = f"chk_em_art_{r_idx}"
+                            r_title = r_art.get("korean_title") or r_art.get("title", "")
+                            r_no = r_art.get("no", "")
+                            r_media = r_art.get("source_media", "News")
+                            is_sel = st.checkbox(f"No.{r_no} [{r_media}] {r_title[:40]}...", value=True, key=r_chk_key)
+                            if is_sel:
+                                selected_sheet_articles.append(r_art)
+                    else:
+                        st.info("구글 시트에 저장된 뉴스 기사가 없습니다.")
+
+            btn_em_preview = st.button("🔍 발송 대상 기사 조회 및 미리보기", use_container_width=True, key="btn_em_preview")
+
+            if btn_em_preview:
+                if not sheets_ok:
+                    st.error("Google Sheets가 연결되어 있지 않습니다.")
+                else:
+                    with st.spinner("구글 시트에서 기사 데이터를 가져오는 중..."):
+                        if "1. 행 번호 범위" in em_extract_mode:
+                            selected_sheet_articles = st.session_state.sheets.get_news_by_range(int(em_start_no), int(em_end_no))
+                        elif "2. 수집 회차" in em_extract_mode:
+                            selected_sheet_articles = st.session_state.sheets.get_news_by_batch(em_batch_id)
+                        elif "3. 기사 게재일" in em_extract_mode:
+                            d_str = em_target_date.strftime("%Y-%m-%d")
+                            selected_sheet_articles = st.session_state.sheets.get_news_by_date(d_str)
+
+                        st.session_state["em_preview_articles"] = selected_sheet_articles
+
+            preview_arts = st.session_state.get("em_preview_articles", selected_sheet_articles)
+
+            if preview_arts:
+                st.success(f"총 **{len(preview_arts)}개**의 기사가 발송 대상으로 선택되었습니다.")
+                with st.expander(f"📋 선택된 {len(preview_arts)}개 기사 미리보기 목록", expanded=False):
+                    for idx, p_art in enumerate(preview_arts, 1):
+                        p_t = p_art.get("korean_title") or p_art.get("title", "")
+                        st.markdown(f"**{idx}. No.{p_art.get('no')} [{p_art.get('source_media')}] {p_t}**")
+                        st.caption(f"📅 게재일: {p_art.get('published_date')} | 🔗 URL: {p_art.get('source_url')}")
+                        st.caption(f"💡 요약: {p_art.get('korean_summary')}")
+                        st.markdown("---")
+
+            btn_send_mail = st.button("📩 선택한 뉴스 이메일 레포트 즉시 발송", use_container_width=True, type="primary", key="btn_send_mail")
+
+            if btn_send_mail:
+                target_arts = st.session_state.get("em_preview_articles", selected_sheet_articles)
+                if not target_arts:
+                    # Attempt fetch on the fly
+                    if sheets_ok:
+                        if "1. 행 번호 범위" in em_extract_mode:
+                            target_arts = st.session_state.sheets.get_news_by_range(int(em_start_no), int(em_end_no))
+                        elif "2. 수집 회차" in em_extract_mode:
+                            target_arts = st.session_state.sheets.get_news_by_batch(em_batch_id)
+                        elif "3. 기사 게재일" in em_extract_mode:
+                            d_str = em_target_date.strftime("%Y-%m-%d")
+                            target_arts = st.session_state.sheets.get_news_by_date(d_str)
+
+                if not target_arts:
+                    st.warning("발송할 대상 기사가 없습니다. 조건을 확인하거나 '미리보기' 버튼을 누르세요.")
+                elif not em_receiver.strip():
+                    st.warning("수신 이메일 주소를 입력해 주세요.")
+                else:
+                    with st.spinner(f"📧 총 {len(target_arts)}개 기사를 {em_receiver} 주소로 발송 중..."):
+                        mail_res = email_svc.send_news_briefing_email(
+                            receiver_emails=em_receiver.strip(),
+                            articles=target_arts,
+                            custom_subject=em_subject
+                        )
+                        if mail_res.get("success"):
+                            st.success(f"🎉 성공적으로 **{len(target_arts)}개**의 뉴스 기사를 `{em_receiver}` 주소로 이메일 발송했습니다!")
+                        else:
+                            st.error(f"❌ 이메일 발송 실패: {mail_res.get('error')}")
+
 
         
     with st.expander("⚙️ 고급 설정 (Advanced Settings)", expanded=False):
@@ -1602,16 +1738,165 @@ with tab_news:
                 key="n_custom_batch"
             )
 
-        st.markdown("##### 📡 뉴스 탐색 채널 선택 (Discovery Channels)")
-        col_ch1, col_ch2, col_ch3 = st.columns(3)
-        with col_ch1:
-            enable_gemini_ch = st.checkbox("Gemini Grounding", value=True, key="chk_gemini_ch")
-        with col_ch2:
-            enable_gnews_rss_ch = st.checkbox("Google News RSS (when:Nd)", value=True, key="chk_gnews_rss_ch")
-        with col_ch3:
-            enable_direct_rss_ch = st.checkbox("주요 매체 직접 RSS", value=True, key="chk_direct_rss_ch")
+        st.markdown("##### 📝 뉴스 탐색 추가 프롬프트 & 스킬 지침 (Prompt & Skill Directives)")
+        col_sk1, col_sk2 = st.columns([1, 1])
+        with col_sk1:
+            skill_preset = st.selectbox(
+                "🎯 탐색 스킬 프리셋 (Skill Preset)",
+                [
+                    "1. 기본 AI 뉴스 탐색 스킬 (3상 교차검증 & 직링크)",
+                    "2. 비즈니스 / M&A / 한국 시장 관련성 중심 스킬",
+                    "3. 기술 스펙 / 제품 출시 / 연구 중심 스킬"
+                ],
+                index=0,
+                key="sb_skill_preset",
+                help="수집 탐색 시 우선적으로 적용할 AI 수집 스킬 규칙을 선택합니다."
+            )
+        with col_sk2:
+            default_prompt = (
+                "[AIKA 공통 핵심 지침]\n"
+                "1. 탐색 범위: 최근 24~48시간 이내 발표된 글로벌/국내 주요 AI 빅테크 및 AI 스타트업 신규 모델 출시, 비즈니스 M&A, 주요 제휴 소식 우선 수집.\n"
+                "2. 노이즈 및 중복 제외: 단순 기업 홍보용 보도자료, 구체적 내용 없는 글, 암호화폐/가상자산 관련 AI 뉴스는 엄격히 제외.\n"
+                "3. 핵심 정보 필수 포함: ① AI 기업명, ② 핵심 서비스/기술 요약, ③ 모델 스펙/가격/성과 지표 요약 포함.\n"
+                "4. 원문 링크 보장: 2차 재인용 블로그 제외, 1차 IT 전문 언론사 또는 기업 공식 블로그 직접 링크(Deep Link) 확보."
+            )
+            custom_prompt_directive = st.text_area(
+                "📝 사용자 커스텀 프롬프트 지침 (Custom Directives)",
+                value=default_prompt,
+                height=120,
+                key="ta_custom_prompt",
+                help="미입력 시 기본 공통 지침이 자동 적용되며, 추가하고 싶은 수집/제외 조건을 자유롭게 수정 또는 입력할 수 있습니다."
+            )
 
         render_timer_ui("news", "AI 뉴스")
+
+    # ----------------- MANUAL NEWS ARTICLE INPUT SECTION -----------------
+    with st.expander("✍️ 수동 뉴스 기사(1개~N개) 직접 입력 및 Gemini 요약 (Manual Input Mode)", expanded=False):
+        st.markdown("##### 📝 수동 수집한 1개~N개 기사 원문/내용을 Gemini로 즉시 분석 및 구글 시트에 저장")
+        st.caption("구분선 없이 1개 또는 여러 개(N개)의 뉴스 기사를 줄간격으로 붙여넣으세요. 텍스트 내 URL 주소가 포함되어 있을 경우 웹 원문을 추가 탐색하며, 접속 차단 시 입력 텍스트 기준으로 자동 우회하여 작성됩니다.")
+        
+        m_col1, m_col2 = st.columns(2)
+        with m_col1:
+            manual_cat = st.selectbox("Primary AI Category", categories_list, index=0, key="m_pcat")
+        with m_col2:
+            manual_topic = st.selectbox("News Topic", news_topics_list[1:], index=0, key="m_topic")
+
+        manual_content = st.text_area(
+            "기사 1개~N개 원문 / 내용 뭉치 (Article Content Bundle - 필수)",
+            value="",
+            height=220,
+            key="m_content",
+            help="1개 또는 여러 개의 기사 본문을 자유롭게 붙여넣으세요. 기사 안에 http:// 또는 https:// URL 주소가 있으면 자동으로 감지하여 원문을 탐색합니다."
+        )
+        
+        manual_btn = st.button("✍️ 수동 입력 기사(1~N개) Gemini 분석 및 요약 등록", use_container_width=True, key="btn_manual_analyze")
+        
+        if manual_btn:
+            st.session_state["news_stop_requested"] = False
+            if not manual_content.strip():
+                st.warning("기사 원문 / 내용을 입력해 주세요.")
+            elif not gemini_ok:
+                st.error("Gemini API Key가 연결되어 있지 않습니다. 설정 및 API 키를 확인하세요.")
+            else:
+                with st.status("🤖 1개~N개 수동 기사 단락 분할, URL 탐색 및 Gemini 템플릿 요약 진행 중...", expanded=True) as status_m:
+                    try:
+                        stop_col1, stop_col2 = st.columns([1, 3])
+                        if stop_col1.button("⏹️ 분석 중단 (Stop)", key="btn_stop_manual_analysis"):
+                            st.session_state["news_stop_requested"] = True
+
+                        def m_callback(msg):
+                            status_m.write(msg)
+                            if st.session_state.get("news_stop_requested"):
+                                raise OperationCancelledException("사용자에 의해 수동 기사 분석이 중단되었습니다.")
+
+                        analyzed_list = st.session_state.gemini.analyze_multiple_manual_articles(
+                            raw_text_bundle=manual_content.strip(),
+                            primary_category=manual_cat,
+                            news_topic=manual_topic,
+                            status_callback=m_callback
+                        )
+                        
+                        n_cat_code = CATEGORY_CODES.get(manual_cat, "ALL")
+                        m_batch_id = f"NEWS-MANUAL-{n_cat_code}-{datetime.now().strftime('%Y%m%d')}-{random.randint(10,99)}"
+                        if "news_batch_id" not in st.session_state or not st.session_state.news_batch_id:
+                            st.session_state.news_batch_id = m_batch_id
+
+                        if "news_candidates" not in st.session_state or st.session_state.news_candidates is None:
+                            st.session_state.news_candidates = []
+                        
+                        for item in analyzed_list:
+                            item["collected_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            item["review_status"] = "New"
+                            item["batch_id"] = st.session_state.get("news_batch_id", m_batch_id)
+                            item["save_to_sheet"] = True
+                            st.session_state.news_candidates.append(item)
+
+                        # 💾 Save Local Audit Log & Local Backup File for Manual Entries
+                        try:
+                            m_audit_records = [
+                                {
+                                    "title": item.get("title") or item.get("korean_title"),
+                                    "url": item.get("source_url", ""),
+                                    "media": item.get("source_media", "Manual Entry"),
+                                    "reason": item.get("audit_status", "Approved (Manual Entry)"),
+                                    "passed": True,
+                                    "discovery_channel": "manual"
+                                } for item in analyzed_list
+                            ]
+                            st.session_state.batch_service.save_audit_log(m_batch_id, m_audit_records)
+                        except Exception as log_err:
+                            logger.warning(f"Failed to save manual audit log: {log_err}")
+
+                        try:
+                            m_backup_payload = {
+                                "batch_id": m_batch_id,
+                                "research_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                "primary_category": manual_cat,
+                                "news_topic": manual_topic,
+                                "candidates": st.session_state.news_candidates,
+                                "status": "Awaiting Review (Manual Entry)"
+                            }
+                            st.session_state.batch_service.save_local_backup(m_batch_id, m_backup_payload)
+                        except Exception as bak_err:
+                            logger.warning(f"Failed to save manual local backup: {bak_err}")
+                        
+                        status_m.update(label=f"✓ 총 {len(analyzed_list)}개 수동 기사 Gemini 요약 및 로컬 로그 보관 완료!", state="complete")
+                        st.session_state.selected_news_idx = len(st.session_state.news_candidates) - len(analyzed_list)
+                        st.success(f"✅ 수동 기사 총 **{len(analyzed_list)}개**가 성공적으로 등록 및 로컬 로그(`data/audit_logs/`, `data/local_backup/`)에 보관되었습니다. 아래 ②번 편집기 뷰에서 확인하세요.")
+                        st.rerun()
+                    except OperationCancelledException as cancel_err:
+                        partial_list = getattr(cancel_err, 'partial_data', []) or []
+                        if partial_list:
+                            n_cat_code = CATEGORY_CODES.get(manual_cat, "ALL")
+                            m_batch_id = f"NEWS-MANUAL-{n_cat_code}-{datetime.now().strftime('%Y%m%d')}-{random.randint(10,99)}"
+                            if "news_batch_id" not in st.session_state or not st.session_state.news_batch_id:
+                                st.session_state.news_batch_id = m_batch_id
+                            if "news_candidates" not in st.session_state or st.session_state.news_candidates is None:
+                                st.session_state.news_candidates = []
+                            for item in partial_list:
+                                item["collected_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                item["review_status"] = "New"
+                                item["batch_id"] = st.session_state.get("news_batch_id", m_batch_id)
+                                item["save_to_sheet"] = True
+                                st.session_state.news_candidates.append(item)
+                            try:
+                                m_backup_payload = {
+                                    "batch_id": m_batch_id,
+                                    "research_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                    "primary_category": manual_cat,
+                                    "news_topic": manual_topic,
+                                    "candidates": st.session_state.news_candidates,
+                                    "status": "Awaiting Review (Stopped)"
+                                }
+                                st.session_state.batch_service.save_local_backup(m_batch_id, m_backup_payload)
+                            except Exception:
+                                pass
+                        status_m.update(label=f"⏹️ 수동 기사 분석 중단됨 (분석 완료: {len(partial_list)}개)", state="complete")
+                        st.warning(f"⏹️ 사용자에 의해 수동 기사 분석이 중단되었습니다. 중단 전까지 완료된 **{len(partial_list)}개** 기사가 보존되었습니다.")
+                    except Exception as m_err:
+                        status_m.update(label=f"❌ 수동 기사 분석 중 에러: {m_err}", state="error")
+                        st.error(f"수동 기사 분석 실패: {m_err}")
+
 
             
     n_combined_domains_list = parse_domains(n_default_domains) + parse_domains(n_temp_domains)
@@ -1620,11 +1905,62 @@ with tab_news:
     
     st.markdown("---")
     
-    since_str = news_since_date.strftime('%Y-%m-%d')
-    n_btn_label = f"📰 AI 뉴스 {news_target_count}개 수집 및 분석 시작 ({since_str} 이후)"
+    target_cnt = st.session_state.get("n_target_count", news_target_count)
+    since_dt = st.session_state.get("n_since_date", news_since_date)
+    since_str = since_dt.strftime('%Y-%m-%d') if hasattr(since_dt, 'strftime') else str(since_dt)
+    n_btn_label = f"📰 AI 뉴스 {target_cnt}개 수집 및 분석 시작 ({since_str} 이후)"
     n_search_button = st.button(n_btn_label, use_container_width=True, key="n_search_btn")
     
+    # Jev (TypeSafe) Evaluation & 4-Bucket Analytics Dashboard Container
+    if st.session_state.get("news_candidates"):
+        with st.expander("⚡ Jev (TypeSafe) 뉴스 수집/평가 및 48시간/4개 버킷 분석 요약 (Metrics Dashboard)", expanded=True):
+            cands = st.session_state.news_candidates
+            
+            bucket_counts = {"국내 AI 소식": 0, "해외 AI 소식": 0, "국내 AI 솔루션": 0, "해외 AI 솔루션": 0}
+            ai_probs = []
+            impact_scores = []
+            valid_pass_count = 0
+            filtered_count = 0
+
+            for a in cands:
+                b = a.get("target_bucket")
+                if not b:
+                    reg = "국내" if (a.get("article_region") == "국내" or a.get("korea_market_relevance") == "High") else "해외"
+                    typ = "솔루션" if a.get("article_type") == "솔루션" else "소식"
+                    b = f"{reg} AI {typ}"
+                bucket_counts[b] = bucket_counts.get(b, 0) + 1
+
+                prob = a.get("jev_ai_prob")
+                if prob is not None:
+                    ai_probs.append(float(prob))
+                
+                imp = a.get("jev_impact_score")
+                if imp is not None:
+                    impact_scores.append(float(imp))
+
+                if a.get("review_status") == "Filtered (Non-AI)":
+                    filtered_count += 1
+                else:
+                    valid_pass_count += 1
+
+            avg_prob = (sum(ai_probs) / len(ai_probs) * 100) if ai_probs else 0.0
+            avg_imp = (sum(impact_scores) / len(impact_scores)) if impact_scores else 0.0
+
+            col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+            col_m1.metric("🎯 평균 AI 확신도", f"{avg_prob:.1f}%")
+            col_m2.metric("💥 평균 영향도 점수", f"{avg_imp:.2f} / 5.0")
+            col_m3.metric("⏰ 48h/원문 검수 통과", f"{valid_pass_count}건")
+            col_m4.metric("🚫 WAF/차단/필터링", f"{filtered_count}건")
+
+            st.markdown("###### 📊 4개 버킷별 수집 기사 분포 (국내/해외 소식 & 솔루션)")
+            b_col1, b_col2, b_col3, b_col4 = st.columns(4)
+            b_col1.info(f"🇰🇷 **국내 AI 소식**: `{bucket_counts.get('국내 AI 소식', 0)}개`")
+            b_col2.info(f"🌐 **해외 AI 소식**: `{bucket_counts.get('해외 AI 소식', 0)}개`")
+            b_col3.info(f"🛠️ **국내 AI 솔루션**: `{bucket_counts.get('국내 AI 솔루션', 0)}개`")
+            b_col4.info(f"🚀 **해외 AI 솔루션**: `{bucket_counts.get('해외 AI 솔루션', 0)}개`")
+    
     if n_search_button:
+        st.session_state["news_stop_requested"] = False
         if not gemini_ok:
             st.error("Gemini API Key가 누락되었거나 연결에 실패했습니다. 설정 및 API 키를 확인하세요.")
         else:
@@ -1653,13 +1989,12 @@ with tab_news:
                 "primary_category": news_primary_cat,
                 "news_topic": news_topic,
                 "language": news_language,
-                "target_count": news_target_count,
+                "target_count": target_cnt,
                 "research_date": datetime.now().strftime("%Y-%m-%d"),
                 "since_date": since_str,
                 "preferred_sources": n_combined_domains,
-                "enable_gemini": enable_gemini_ch,
-                "enable_google_news_rss": enable_gnews_rss_ch,
-                "enable_direct_rss": enable_direct_rss_ch,
+                "skill_preset": skill_preset,
+                "custom_prompt_directive": custom_prompt_directive.strip(),
             }
             
             col_run_left, col_run_right = st.columns([3, 2])
@@ -1684,141 +2019,182 @@ with tab_news:
             update_realtime_urls(st.session_state.get("news_grounding_urls", []), "")
 
             raw_news = []
-            with col_run_left:
-                with st.status("🔍 1단계: 뉴스 후보 기사 오버패칭 실시간 탐색 중...", expanded=True) as status:
-                    try:
-                        def update_status(msg, urls=None):
-                            status.write(msg)
-                            if urls:
-                                st.session_state["news_grounding_urls"] = urls
-                                update_realtime_urls(urls, msg)
+            audited_news = []
+            try:
+                with col_run_left:
+                    col_stop1, col_stop2 = st.columns([1, 3])
+                    if col_stop1.button("⏹️ 수집 중단 (Stop)", key="btn_stop_auto_search"):
+                        st.session_state["news_stop_requested"] = True
 
-                        tri_res = st.session_state.gemini.run_tri_engine_discovery(
-                            n_batch_params, n_existing_urls, status_callback=update_status
-                        )
-                        raw_news = tri_res.get("candidates", [])
-                        g_urls_discovered = getattr(st.session_state.gemini, "_last_grounding_urls", [])
-                        st.session_state["news_grounding_urls"] = g_urls_discovered
-                        update_realtime_urls(g_urls_discovered, "1차 후보 수집 완료")
-                        status.update(label=f"✓ 1단계: 실시간 후보 탐색 및 2차 교차검증 완료 ({len(raw_news)}개 기사 승인 / {len(g_urls_discovered)}개 참고 URL 확보)", state="complete")
-                    except Exception as e:
-                        status.update(label=f"✗ 1단계 탐색 및 검증 실패: {e}", state="error")
-                        st.error(f"Error details: {e}")
-                        
-                audited_news = []
-                if raw_news:
-                    with st.status("🛡️ 2-3단계: URL 정합성 및 최종 검증 (validator.py) 확인 중...", expanded=True) as status_audit:
+                    with st.status("🔍 1단계: 뉴스 후보 기사 오버패칭 실시간 탐색 중...", expanded=True) as status:
                         try:
-                            from services.validator import validate_article
-                            rejected_items = []
+                            def update_status(msg, urls=None):
+                                status.write(msg)
+                                if urls:
+                                    st.session_state["news_grounding_urls"] = urls
+                                    update_realtime_urls(urls, msg)
+                                if st.session_state.get("news_stop_requested"):
+                                    raise OperationCancelledException("사용자에 의해 뉴스 수집이 중단되었습니다.")
 
-                            for idx, a in enumerate(raw_news, 1):
-                                title = a.get("title", "")
-                                title_kr = a.get("korean_title", title)
-                                media = a.get("source_media", "News")
-                                raw_url = a.get("source_url", "")
-
-                                status_audit.write(f"[{idx}/{len(raw_news)}] '{title_kr[:25]}...' URL & 게재일 검증 중...")
-
-                                v_res = validate_article(
-                                    url=raw_url,
-                                    source_media=media,
-                                    cutoff_date=news_since_date if isinstance(news_since_date, date) else None,
-                                    existing_urls=set(n_existing_urls)
-                                )
-
-                                if v_res["passed"]:
-                                    a["source_url"] = v_res["final_url"]
-                                    if v_res["published_at"]:
-                                        a["published_date"] = v_res["published_at"]
-                                    a["audit_status"] = "Approved (Validator Passed)"
-                                    audited_news.append(a)
-                                    status_audit.write(f"  ✅ 통과: 게재일={v_res['published_at']}, URL={v_res['final_url']}")
-                                else:
-                                    reason = v_res["reason"]
-                                    a["audit_status"] = f"Rejected ({reason})"
-                                    rejected_items.append({
-                                        "collected_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                        "batch_id": n_batch_id,
-                                        "reason": reason,
-                                        "url": raw_url,
-                                        "title": title,
-                                        "discovery_channel": a.get("discovery_channel", "gemini")
-                                    })
-                                    status_audit.write(f"  ❌ 탈락 사유: {reason}")
-
-                            # Write rejected items to _rejected tab in Google Sheets
-                            if rejected_items and sheets_ok:
-                                try:
-                                    st.session_state.sheets.append_rejected_news(rejected_items)
-                                except Exception as r_err:
-                                    logger.warning(f"Failed to record rejected items to sheet: {r_err}")
-
-                            # Save local audit log file for Tab 4 analysis
-                            try:
-                                all_log_records = rejected_items + [
-                                    {
-                                        "title": a.get("title"),
-                                        "url": a.get("source_url"),
-                                        "media": a.get("source_media"),
-                                        "reason": a.get("audit_status", "Approved"),
-                                        "passed": True
-                                    } for a in audited_news
-                                ]
-                                st.session_state.batch_service.save_audit_log(n_batch_id, all_log_records)
-                            except Exception as log_err:
-                                logger.warning(f"Failed to save local audit log: {log_err}")
-
-                            reason_counts = {}
-                            for r in rejected_items:
-                                rs = r["reason"]
-                                reason_counts[rs] = reason_counts.get(rs, 0) + 1
-
-                            rej_summary = " / ".join([f"{k} {v}건" for k, v in reason_counts.items()]) if reason_counts else "없음"
-                            status_audit.update(
-                                label=f"✓ 최종 검증 완료: 시도 {len(raw_news)}건 → 통과 {len(audited_news)}건 (탈락: {rej_summary})",
-                                state="complete"
+                            tri_res = st.session_state.gemini.run_tri_engine_discovery(
+                                n_batch_params, n_existing_urls, status_callback=update_status
                             )
-                        except Exception as audit_err:
-                            status_audit.update(label=f"⚠️ 최종 검증 중 경고: {audit_err}", state="complete")
-                            audited_news = raw_news
+                            raw_news = tri_res.get("candidates", [])
+                            g_urls_discovered = getattr(st.session_state.gemini, "_last_grounding_urls", [])
+                            st.session_state["news_grounding_urls"] = g_urls_discovered
+                            update_realtime_urls(g_urls_discovered, "1차 후보 수집 완료")
+                            status.update(label=f"✓ 1단계: 실시간 후보 탐색 및 2차 교차검증 완료 ({len(raw_news)}개 기사 승인 / {len(g_urls_discovered)}개 참고 URL 확보)", state="complete")
+                        except OperationCancelledException as cancel_err:
+                            status.update(label=f"⏹️ 뉴스 실시간 탐색 중단됨", state="complete")
+                            raise cancel_err
+                        except Exception as e:
+                            status.update(label=f"✗ 1단계 탐색 및 검증 실패: {e}", state="error")
+                            st.error(f"Error details: {e}")
+                            
+                    if raw_news:
+                        with st.status("🛡️ 2-3단계: URL 정합성 및 최종 검증 (validator.py) 확인 중...", expanded=True) as status_audit:
+                            try:
+                                from services.validator import validate_article
+                                rejected_items = []
 
-            with col_run_right:
-                # Keep final state rendered
-                update_realtime_urls(st.session_state.get("news_grounding_urls", []), "최종 수집 완료")
+                                for idx, a in enumerate(raw_news, 1):
+                                    if st.session_state.get("news_stop_requested"):
+                                        raise OperationCancelledException("사용자에 의해 URL 검증이 중단되었습니다.", partial_data=audited_news)
 
-                valid_news = []
-                for a in audited_news:
-                    if "Approved" not in a.get("audit_status", ""):
-                        continue
-                    if news_exclude_existing:
-                        url = a.get("source_url", "").strip().lower()
-                        if url in n_existing_urls:
+                                    title = a.get("title", "")
+                                    title_kr = a.get("korean_title", title)
+                                    media = a.get("source_media", "News")
+                                    raw_url = a.get("source_url", "")
+
+                                    status_audit.write(f"[{idx}/{len(raw_news)}] '{title_kr[:25]}...' URL & 게재일 검증 중...")
+
+                                    v_res = validate_article(
+                                        url=raw_url,
+                                        source_media=media,
+                                        cutoff_date=news_since_date if isinstance(news_since_date, date) else None,
+                                        existing_urls=set(n_existing_urls)
+                                    )
+
+                                    if v_res["passed"]:
+                                        a["source_url"] = v_res["final_url"]
+                                        if v_res["published_at"]:
+                                            a["published_date"] = v_res["published_at"]
+                                        a["audit_status"] = "Approved (Validator Passed)"
+                                        audited_news.append(a)
+                                        status_audit.write(f"  ✅ 통과: 게재일={v_res['published_at']}, URL={v_res['final_url']}")
+                                    else:
+                                        reason = v_res["reason"]
+                                        a["audit_status"] = f"Rejected ({reason})"
+                                        rejected_items.append({
+                                            "collected_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                            "batch_id": n_batch_id,
+                                            "reason": reason,
+                                            "url": raw_url,
+                                            "title": title,
+                                            "discovery_channel": a.get("discovery_channel", "gemini")
+                                        })
+                                        status_audit.write(f"  ❌ 탈락 사유: {reason}")
+
+                                # Write rejected items to _rejected tab in Google Sheets
+                                if rejected_items and sheets_ok:
+                                    try:
+                                        st.session_state.sheets.append_rejected_news(rejected_items)
+                                    except Exception as r_err:
+                                        logger.warning(f"Failed to record rejected items to sheet: {r_err}")
+
+                                # Save local audit log file for Tab 4 analysis
+                                try:
+                                    all_log_records = rejected_items + [
+                                        {
+                                            "title": a.get("title"),
+                                            "url": a.get("source_url"),
+                                            "media": a.get("source_media"),
+                                            "reason": a.get("audit_status", "Approved"),
+                                            "passed": True
+                                        } for a in audited_news
+                                    ]
+                                    st.session_state.batch_service.save_audit_log(n_batch_id, all_log_records)
+                                except Exception as log_err:
+                                    logger.warning(f"Failed to save local audit log: {log_err}")
+
+                                reason_counts = {}
+                                for r in rejected_items:
+                                    rs = r["reason"]
+                                    reason_counts[rs] = reason_counts.get(rs, 0) + 1
+
+                                rej_summary = " / ".join([f"{k} {v}건" for k, v in reason_counts.items()]) if reason_counts else "없음"
+                                status_audit.update(
+                                    label=f"✓ 최종 검증 완료: 시도 {len(raw_news)}건 → 통과 {len(audited_news)}건 (탈락: {rej_summary})",
+                                    state="complete"
+                                )
+                            except OperationCancelledException as cancel_err:
+                                status_audit.update(label=f"⏹️ URL 검증 중단됨 (통과: {len(audited_news)}건)", state="complete")
+                                raise cancel_err
+                            except Exception as audit_err:
+                                status_audit.update(label=f"⚠️ 최종 검증 중 경고: {audit_err}", state="complete")
+                                audited_news = raw_news
+
+                with col_run_right:
+                    # Keep final state rendered
+                    update_realtime_urls(st.session_state.get("news_grounding_urls", []), "수집 종료")
+
+                    valid_news = []
+                    for a in audited_news:
+                        if "Approved" not in a.get("audit_status", ""):
                             continue
+                        if news_exclude_existing:
+                            url = a.get("source_url", "").strip().lower()
+                            if url in n_existing_urls:
+                                continue
+                        a["collected_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        a["review_status"] = "New"
+                        a["batch_id"] = n_batch_id
+                        valid_news.append(a)
+                        
+                    try:
+                        n_backup_payload = {
+                            "batch_id": n_batch_id,
+                            "research_date": n_batch_params["research_date"],
+                            "primary_category": news_primary_cat,
+                            "news_topic": news_topic,
+                            "candidates": valid_news,
+                            "status": "Awaiting Review"
+                        }
+                        st.session_state.batch_service.save_local_backup(n_batch_id, n_backup_payload)
+                    except Exception as e:
+                        st.warning(f"로컬 백업 생성 실패: {e}")
+                        
+                    if not valid_news:
+                        st.info("검색 조건에 맞는 새 기사를 찾지 못했습니다. 검색 단어를 조정해 보세요.")
+                    else:
+                        st.success(f"3단계 교차 검증을 거친 **{len(valid_news)}**개의 AI 기사를 성공적으로 수집했습니다!")
+                        st.session_state.news_candidates = valid_news
+                        st.session_state.selected_news_idx = 0
+            except OperationCancelledException as cancel_err:
+                partial_candidates = getattr(cancel_err, 'partial_data', None)
+                if partial_candidates is None:
+                    partial_candidates = audited_news if audited_news else raw_news
+                valid_partial = [a for a in partial_candidates if "Approved" in a.get("audit_status", "Approved")]
+                for a in valid_partial:
                     a["collected_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     a["review_status"] = "New"
                     a["batch_id"] = n_batch_id
-                    valid_news.append(a)
-                    
-                try:
-                    n_backup_payload = {
-                        "batch_id": n_batch_id,
-                        "research_date": n_batch_params["research_date"],
-                        "primary_category": news_primary_cat,
-                        "news_topic": news_topic,
-                        "candidates": valid_news,
-                        "status": "Awaiting Review"
-                    }
-                    st.session_state.batch_service.save_local_backup(n_batch_id, n_backup_payload)
-                except Exception as e:
-                    st.warning(f"로컬 백업 생성 실패: {e}")
-                    
-                if not valid_news:
-                    st.info("검색 조건에 맞는 새 기사를 찾지 못했습니다. 검색 단어를 조정해 보세요.")
-                else:
-                    st.success(f"3단계 교차 검증을 거친 **{len(valid_news)}**개의 AI 기사를 성공적으로 수집했습니다!")
-                    st.session_state.news_candidates = valid_news
+                if valid_partial:
+                    st.session_state.news_candidates = valid_partial
                     st.session_state.selected_news_idx = 0
+                    try:
+                        n_backup_payload = {
+                            "batch_id": n_batch_id,
+                            "research_date": n_batch_params["research_date"],
+                            "primary_category": news_primary_cat,
+                            "news_topic": news_topic,
+                            "candidates": valid_partial,
+                            "status": "Awaiting Review (Stopped)"
+                        }
+                        st.session_state.batch_service.save_local_backup(n_batch_id, n_backup_payload)
+                    except Exception:
+                        pass
+                st.warning(f"⏹️ 사용자에 의해 수집 작업이 중단되었습니다. 중단 시점까지 완료된 **{len(valid_partial)}개** 기사가 보존되었습니다.")
 
     # ----------------- 2. NEWS EDITOR & PREVIEW -----------------
     if st.session_state.news_candidates:
@@ -1837,13 +2213,16 @@ with tab_news:
         col_n_list, col_n_edit = st.columns([1, 2])
         news_cands = st.session_state.news_candidates
         
+        if "chk_news_save_all" not in st.session_state:
+            st.session_state["chk_news_save_all"] = True
+
         for idx, a in enumerate(news_cands):
             n_key = f"chk_news_save_{idx}"
             if n_key not in st.session_state:
                 st.session_state[n_key] = a.get("save_to_sheet", True)
                 
         def on_news_select_all_change():
-            new_val = st.session_state["chk_news_save_all"]
+            new_val = st.session_state.get("chk_news_save_all", True)
             for idx in range(len(news_cands)):
                 st.session_state[f"chk_news_save_{idx}"] = new_val
                 news_cands[idx]["save_to_sheet"] = new_val
@@ -1880,7 +2259,16 @@ with tab_news:
                     on_click=select_news_callback,
                     args=(idx,)
                 )
-                st.markdown(f"<small>🏷️ {topic} | 📅 {a.get('published_date', '')}</small>", unsafe_allow_html=True)
+                
+                # Jev (TypeSafe) status snippet badge in candidate list
+                jev_prob = a.get("jev_ai_prob")
+                jev_imp = a.get("jev_impact_score")
+                if jev_prob is not None:
+                    prob_pct = int(float(jev_prob) * 100)
+                    badge_color = "green" if prob_pct >= 45 else "red"
+                    st.markdown(f"<small>🏷️ {topic} | 📅 {a.get('published_date', '')} | ⚡ Jev AI: <span style='color:{badge_color};font-weight:bold;'>{prob_pct}%</span> (Impact: {jev_imp if jev_imp is not None else 'N/A'})</small>", unsafe_allow_html=True)
+                else:
+                    st.markdown(f"<small>🏷️ {topic} | 📅 {a.get('published_date', '')}</small>", unsafe_allow_html=True)
                 st.markdown("---")
 
         with col_n_edit:
@@ -1889,6 +2277,18 @@ with tab_news:
                 curr = news_cands[sel_idx]
                 st.markdown(f"### ✏️ 기사 #{sel_idx+1} 상세 정보 수정")
                 
+                # Jev (TypeSafe System One) Detailed Analysis Banner
+                jev_prob = curr.get("jev_ai_prob")
+                jev_imp = curr.get("jev_impact_score")
+                if jev_prob is not None or jev_imp is not None or curr.get("primary_ai_category"):
+                    prob_text = f"{int(float(jev_prob)*100)}%" if jev_prob is not None else "N/A"
+                    imp_text = f"{float(jev_imp):.2f} / 5.0" if jev_imp is not None else "N/A"
+                    status_text = curr.get("review_status", "New")
+                    if status_text == "Filtered (Non-AI)":
+                        st.error(f"🔴 **Jev (TypeSafe) 분류 결과**: [비-AI 뉴스 필터링됨] 🎯 AI 확률: `{prob_text}` | 🏷️ 카테고리: `{curr.get('primary_ai_category', 'N/A')}` | 💥 영향도: `{imp_text}` | 🇰🇷 한국 연관성: `{curr.get('korea_market_relevance', 'N/A')}`")
+                    else:
+                        st.info(f"⚡ **Jev (TypeSafe) System One AI 자동 분석 결과**: 🎯 AI 확률: `{prob_text}` | 🏷️ 카테고리: `{curr.get('primary_ai_category', 'N/A')}` | 💥 영향도 점수: `{imp_text}` | 🇰🇷 한국 시장 연관성: `{curr.get('korea_market_relevance', 'N/A')}`")
+
                 col_title1, col_title2 = st.columns(2)
                 with col_title1:
                     curr["title"] = st.text_input("원문 기사 제목 (Original Title)", curr.get("title", ""), key=f"n_title_{sel_idx}")

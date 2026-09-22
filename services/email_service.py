@@ -247,3 +247,61 @@ class EmailService:
         except Exception as e:
             logger.error(f"Failed to send email: {e}")
             return {"success": False, "error": str(e)}
+
+    def send_news_briefing_email(
+        self,
+        receiver_emails: str,
+        articles: List[Dict[str, Any]],
+        custom_subject: str = ""
+    ) -> Dict[str, Any]:
+        """Renders and sends a news briefing email containing a list of articles to specified recipient(s)."""
+        if not articles:
+            return {"success": False, "error": "No news articles provided to send."}
+
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        subject = custom_subject.strip() if custom_subject.strip() else f"[AI 뉴스 브리핑] {today_str} 주요 AI 기술 및 시장 동향 ({len(articles)}선)"
+
+        cards_html = "".join([self.render_news_card_html(a) for a in articles])
+
+        html_body = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin: 0; padding: 0; background-color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+    <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #f1f5f9; padding: 30px 10px;">
+        <tr>
+            <td align="center">
+                <table width="100%" max-width="680" border="0" cellspacing="0" cellpadding="0" style="max-width: 680px; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
+                    <!-- Header -->
+                    <tr>
+                        <td style="background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); padding: 28px 32px; color: #ffffff;">
+                            <div style="font-size: 13px; font-weight: 600; color: #38bdf8; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px;">AIKA News Intelligence Report</div>
+                            <h1 style="margin: 0; font-size: 22px; font-weight: 800; line-height: 1.3;">{subject}</h1>
+                            <div style="margin-top: 10px; font-size: 13px; color: #94a3b8;">
+                                📅 발송일시: <b>{datetime.now().strftime("%Y-%m-%d %H:%M")}</b> &nbsp;|&nbsp; 📰 총 <b>{len(articles)}개</b> 기사 포함
+                            </div>
+                        </td>
+                    </tr>
+                    <!-- Content Body -->
+                    <tr>
+                        <td style="padding: 24px 28px; background-color: #ffffff;">
+                            {cards_html}
+                        </td>
+                    </tr>
+                    <!-- Footer -->
+                    <tr>
+                        <td style="background-color: #f8fafc; border-top: 1px solid #e2e8f0; padding: 20px 24px; text-align: center; color: #64748b; font-size: 12px; line-height: 1.5;">
+                            <div>본 메일은 <b>AIKA Vendor & News Intelligence System</b>에서 발송되었습니다.</div>
+                            <div style="margin-top: 4px; color: #94a3b8;">수신 계정: <b>{receiver_emails}</b></div>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>"""
+        return self.send_email(subject, html_body, to_email=receiver_emails)
+

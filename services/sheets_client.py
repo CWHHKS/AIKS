@@ -578,3 +578,89 @@ class SheetsClient:
         except Exception as e:
             logger.error(f"Failed to append news: {str(e)}")
             return {"success": False, "error": str(e)}
+
+    def get_all_news_articles(self) -> List[Dict[str, Any]]:
+        """Retrieves all news articles from the master news sheet as a list of dicts."""
+        if not self.news_spreadsheet:
+            return []
+        try:
+            wks = self.news_spreadsheet.worksheet(self.news_sheet_name)
+            rows = wks.get_all_values()
+            if len(rows) <= 1:
+                return []
+            
+            headers = [h.strip() for h in rows[0]]
+            articles = []
+            for r_idx, row in enumerate(rows[1:], 1):
+                # Ensure row has enough columns
+                while len(row) < 18:
+                    row.append("")
+                
+                # Parse title & Korean title if combined
+                raw_title = row[4]
+                orig_title = raw_title
+                kr_title = raw_title
+                if "\n(" in raw_title and raw_title.endswith(")"):
+                    parts = raw_title.split("\n(")
+                    orig_title = parts[0].strip()
+                    kr_title = parts[1].rstrip(")").strip()
+
+                no_val = r_idx
+                try:
+                    no_val = int(row[0].strip())
+                except Exception:
+                    pass
+
+                ref_urls = [u.strip() for u in row[7].splitlines() if u.strip()]
+
+                art = {
+                    "no": no_val,
+                    "batch_id": row[1].strip(),
+                    "collected_at": row[2].strip(),
+                    "published_date": row[3].strip(),
+                    "title": orig_title,
+                    "korean_title": kr_title,
+                    "source_media": row[5].strip(),
+                    "source_url": row[6].strip(),
+                    "reference_urls": ref_urls,
+                    "language": row[8].strip(),
+                    "primary_ai_category": row[9].strip(),
+                    "news_topic": row[10].strip(),
+                    "related_companies": row[11].strip(),
+                    "korean_summary": row[12].strip(),
+                    "detailed_summary": row[13].strip(),
+                    "key_keywords": row[14].strip(),
+                    "korea_market_relevance": row[15].strip(),
+                    "review_status": row[16].strip(),
+                    "research_notes": row[17].strip(),
+                }
+                articles.append(art)
+            return articles
+        except Exception as e:
+            logger.error(f"Failed to fetch all news articles: {str(e)}")
+            return []
+
+    def get_news_by_range(self, start_no: int, end_no: int) -> List[Dict[str, Any]]:
+        """Filters news articles by No. range (e.g. 117 to 124)."""
+        all_news = self.get_all_news_articles()
+        return [a for a in all_news if start_no <= a.get("no", 0) <= end_no]
+
+    def get_news_by_batch(self, batch_id: str) -> List[Dict[str, Any]]:
+        """Filters news articles by Batch ID."""
+        all_news = self.get_all_news_articles()
+        return [a for a in all_news if a.get("batch_id", "") == batch_id]
+
+    def get_news_by_date(self, target_date: str) -> List[Dict[str, Any]]:
+        """Filters news articles by published_date or collected_at matching target_date."""
+        all_news = self.get_all_news_articles()
+        t_str = str(target_date).strip()
+        return [
+            a for a in all_news
+            if t_str in a.get("published_date", "") or t_str in a.get("collected_at", "")
+        ]
+
+    def get_recent_news_articles(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """Gets recent N news articles in reverse chronological order."""
+        all_news = self.get_all_news_articles()
+        return list(reversed(all_news))[:limit]
+

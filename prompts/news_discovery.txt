@@ -18,27 +18,36 @@ PREVIOUSLY COLLECTED URLs (Do NOT return articles with these URLs):
 RESEARCH INSTRUCTIONS
 
 1. Use current Google Search results to find the MOST RECENT, LATEST breaking AI news articles.
-2. STRICT RECENCY MANDATE:
-   - When calling Google Search, search for current breaking news articles published recently.
-   - Collect ONLY fresh, active news articles (relative to Today {research_date}).
-   - REJECT and DO NOT RETURN historical articles or outdated news from several years ago.
-3. If a "Primary AI Category" is specified, focus on articles about that domain.
-4. If a "News Topic" is specified (e.g., "AI Investment & M&A"), prioritize articles matching that topic.
-5. Search across both English and Korean sources. Prioritize official AI Vendor Blogs and Newsrooms (e.g., openai.com/news, blog.google/technology/ai, deepmind.google/blog, anthropic.com/news, huggingface.co/blog, openrouter.ai/blog, ai.meta.com/blog) as authoritative primary sources alongside major tech media outlets.
-6. CRITICAL MULTI-SOURCE CONSENSUS MANDATE:
+2. STRICT 48-HOUR RECENCY MANDATE:
+   - Search ONLY for fresh breaking news published within the last 48 HOURS relative to Today {research_date}.
+   - REJECT and DO NOT RETURN any outdated or historical articles published earlier than 48 hours ago.
+3. 4 TARGET BUCKETS ALLOCATION:
+   - Strictly balance the search across these 4 specific categories:
+     a) 국내 AI 소식 (Domestic AI News): Korean AI industry, policy, company trends
+     b) 해외 AI 소식 (Overseas AI News): Global Big Tech, international AI trends, policy
+     c) 국내 AI 솔루션 (Domestic AI Solution): Korean AI SaaS, product, enterprise model release
+     d) 해외 AI 솔루션 (Overseas AI Solution): Global AI SaaS, commercial product, model/API launch
+4. If a "Primary AI Category" is specified, focus on articles about that domain.
+5. If a "News Topic" is specified (e.g., "AI Investment & M&A"), prioritize articles matching that topic.
+6. STRICT SPECIALIZED AI PORTAL & VENDOR BLOG MANDATE:
+   - You MUST strictly prioritize searching and extracting breaking news from specialized AI portals:
+     * 국내 AI 전문지: AI Times (aitimes.com, aitimes.kr)
+     * 해외 AI 전문지: AI News (artificialintelligence-news.com)
+   - Also prioritize official AI Vendor Blogs and Newsrooms (e.g., openai.com/news, blog.google/technology/ai, deepmind.google/blog, anthropic.com/news, huggingface.co/blog, openrouter.ai/blog, ai.meta.com/blog) as authoritative primary sources alongside major tech media outlets.
+7. CRITICAL MULTI-SOURCE CONSENSUS MANDATE:
    - For EVERY AI news event, you MUST find and list AT LEAST 3 DIFFERENT MEDIA OUTLET URLs (e.g. ZDNet Korea, ETNews, Digital Daily, Yonhap News, Naver News) covering the exact same headline event.
    - Do NOT return single-source rumors, blogs, or unverified articles without at least 3 distinct media coverage links in "Reference URLs".
    - Provide the EXACT, LIVE, DIRECT article URLs discovered through Google Search for all 3+ sources.
    - NEVER fabricate, guess, shorten, or invent URL paths.
-7. Determine "Korea Market Relevance":
+8. Determine "Korea Market Relevance":
    - High: Directly involves Korean companies, Korean government AI policy, or has significant Korea market impact
    - Medium: Global trend that is relevant to Korean AI market
    - Low: General global AI news with minimal direct Korea relevance
-8. Generate a concise 1-line Korean summary ("Korean Summary") in 1-2 sentences for quick scanning.
-9. Generate a comprehensive 10-line detailed summary ("Detailed 10-Line Summary") written in Korean with 10 structured bullet points covering: background, key facts, tech specs, key companies/people, business impact, Korea market implications, and takeaways.
-10. CRITICAL TRANSLATION REQUIREMENT: If an article is in English, always provide a clear, natural Korean translation of the article title ("Korean Title"). If the article is already in Korean, set Korean Title to the same as Title.
-11. Return no more than {target_count} articles.
-12. Do NOT return duplicate URLs or articles already in the existing URL list.
+9. Generate a concise 1-line Korean summary ("Korean Summary") in 1-2 sentences for quick scanning.
+10. Generate a comprehensive 10-line detailed summary ("Detailed 10-Line Summary") written in Korean with 10 structured bullet points covering: background, key facts, tech specs, key companies/people, business impact, Korea market implications, and takeaways.
+11. CRITICAL TRANSLATION REQUIREMENT: If an article is in English, always provide a clear, natural Korean translation of the article title ("Korean Title"). If the article is already in Korean, set Korean Title to the same as Title.
+12. Return no more than {target_count} articles.
+13. Do NOT return duplicate URLs or articles already in the existing URL list.
 
 NEWS TOPIC OPTIONS (use exactly one):
 - AI Investment & M&A

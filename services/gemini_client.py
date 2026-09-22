@@ -27,6 +27,12 @@ class SafeDict(dict):
     def __missing__(self, key):
         return f"{{{key}}}"
 
+class OperationCancelledException(Exception):
+    """Raised when user requests early termination of long-running news discovery/analysis."""
+    def __init__(self, message: str = "Operation was cancelled by user.", partial_data: Any = None):
+        super().__init__(message)
+        self.partial_data = partial_data
+
 class GeminiClient:
     def __init__(self):
         self.api_key = _get_gemini_setting("GEMINI_API_KEY")
@@ -54,6 +60,27 @@ class GeminiClient:
             raise FileNotFoundError(f"Required prompt file not found: {file_path}")
         with open(full_path, "r", encoding="utf-8") as f:
             return f.read()
+
+    def _is_within_48h(self, pub_date_str: str, research_date_str: Optional[str] = None) -> bool:
+        """Explicitly checks if published_date string is within 48 hours."""
+        if not pub_date_str or not isinstance(pub_date_str, str):
+            return True
+        try:
+            from datetime import datetime
+            clean_pub = pub_date_str.split("T")[0].split(" ")[0].strip()
+            pub_dt = datetime.strptime(clean_pub, "%Y-%m-%d")
+            
+            ref_dt = datetime.now()
+            if research_date_str:
+                try:
+                    ref_dt = datetime.strptime(research_date_str.split("T")[0].split(" ")[0].strip(), "%Y-%m-%d")
+                except Exception:
+                    pass
+            
+            diff = (ref_dt - pub_dt).days
+            return -1 <= diff <= 2
+        except Exception:
+            return True
 
     def run_discovery_stage(self, batch_params: Dict[str, Any], existing_domains: List[str]) -> str:
         """
@@ -379,6 +406,11 @@ For "company_summary" and "korea_market_relevance", format the text with logical
             "existing_urls": urls_str
         }))
         
+        custom_directive = batch_params.get("custom_prompt_directive", "").strip()
+        skill_preset = batch_params.get("skill_preset", "").strip()
+        if custom_directive or skill_preset:
+            user_prompt += f"\n\n[APPLIED SKILL & USER PROMPT DIRECTIVES]\n- Skill Rule: {skill_preset}\n- Custom User Directive: {custom_directive}\nStrictly prioritize and obey these directives during search and summarization."
+
         curr_year = batch_params.get("research_date", "2026")[:4]
         since_val = batch_params.get("since_date", "")
         recency_str = f"published ON OR AFTER {since_val}" if since_val else f"published in the CURRENT YEAR ({curr_year}) and recent 30 days"
@@ -391,7 +423,8 @@ For "company_summary" and "korea_market_relevance", format the text with logical
             "3. MULTI-SOURCE CONSENSUS: For every AI news event, find AT LEAST 3 DIFFERENT MEDIA OUTLETS (e.g. ZDNet Korea, ETNews, Digital Daily, Yonhap News, Naver News) covering the exact same event. List all 3+ URLs under 'Reference URLs'.\n"
             "4. SOURCE URL INTEGRITY: You MUST provide exact, live, working article URLs discovered from search. NEVER invent, guess, or hallucinate URLs.\n"
             "5. If an article is in English, always provide an accurate, natural Korean title translation alongside the original title.\n"
-            "6. Provide high-quality Korean summaries and structured 10-line breakdown bullet points."
+            "6. Provide high-quality Korean summaries and structured 10-line breakdown bullet points.\n"
+            "7. SPECIALIZED AI PORTALS MANDATE: Strictly prioritize searching and selecting articles from specialized AI portals: AI Times (aitimes.com, aitimes.kr) for Korean news and AI News (artificialintelligence-news.com) for global news."
         )
         
         real_grounding_urls = []
@@ -638,7 +671,39 @@ Use this JSON structure:
                     ref_candidates.append(g_uri)
             
             article["reference_urls"] = ref_candidates
+
+            # Apply Jev (TypeSafe System One) News Classification & Filtering
+            try:
+                from services.typesafe_service import TypeSafeNewsClassifier
+                jev_classifier = TypeSafeNewsClassifier()
+                if jev_classifier.is_available():
+                    title_for_jev = str(article.get("title") or article.get("korean_title") or "")
+                    snippet_for_jev = str(article.get("detailed_summary") or article.get("korean_summary") or "")
+                    jev_res = jev_classifier.evaluate_article(title_for_jev, snippet_for_jev, min_ai_prob_threshold=0.65)
+
+                    article["jev_ai_prob"] = jev_res.get("ai_probability")
+                    article["jev_impact_score"] = jev_res.get("impact_score")
+                    article["target_bucket"] = jev_res.get("target_bucket", "국내 AI 소식")
+                    article["article_region"] = jev_res.get("article_region", "국내")
+                    article["article_type"] = jev_res.get("article_type", "소식")
+
+                    if jev_res.get("status") == "success":
+                        article["primary_ai_category"] = jev_res.get("primary_category")
+                        article["korea_market_relevance"] = jev_res.get("korea_relevance")
+
+                    # Python 48-Hour Explicit Date Filter Check
+                    pub_date = str(article.get("published_date", ""))
+                    is_date_recent = self._is_within_48h(pub_date)
+
+                    if not jev_res.get("is_ai_news", True) or not is_date_recent:
+                        reason = jev_res.get('filter_reason') if jev_res.get('filter_reason') else f"Published date ({pub_date}) older than 48 hours"
+                        logger.info(f"Article [{i+1}] marked as Filtered (Non-AI / Outdated) by Jev: {reason}")
+                        article["review_status"] = "Filtered (Non-AI)"
+            except Exception as jev_err:
+                logger.warning(f"Jev classification skipped due to error: {jev_err}")
+
             final_articles.append(article)
+
                 
         combined_result = {
             "batch_id": batch_id,
@@ -694,9 +759,21 @@ Use this JSON structure:
         enable_gemini = batch_params.get("enable_gemini", True)
         base_candidates = []
 
-        if enable_gemini:
+        active_disc_model = os.getenv("DISCOVERY_MODEL", "gemini-2.5-flash").strip()
+
+        if "perplexity" in active_disc_model:
+            px_m_name = "sonar-pro" if "pro" in active_disc_model else "sonar"
             if status_callback:
-                status_callback(f"🌐 1/3 Gemini Search Grounding 탐색 중... ({discovery_count}개 후보 수집)")
+                status_callback(f"⚡ [메인 기사 검색 모델] Perplexity AI ({px_m_name}) 탐색 중... ({discovery_count}개 후보 수집)")
+            from services.perplexity_client import PerplexityNewsClient
+            px_client = PerplexityNewsClient()
+            if px_client.is_available():
+                px_cands = px_client.search_news_candidates(topic, res_date, max_results=discovery_count, model_name=px_m_name)
+                base_candidates.extend(px_cands)
+            gemini_result = {"batch_id": batch_params.get("batch_id", ""), "candidates": base_candidates}
+        elif enable_gemini:
+            if status_callback:
+                status_callback(f"🌐 [메인 기사 검색 모델] Gemini Search Grounding ({active_disc_model}) 탐색 중... ({discovery_count}개 후보 수집)")
             gemini_raw_report = self.run_news_discovery_stage(batch_params_overfetch, existing_urls)
             gemini_result = self.run_news_structuring_stage(
                 batch_params.get("batch_id", ""),
@@ -747,14 +824,15 @@ Use this JSON structure:
             from services.perplexity_client import PerplexityNewsClient
             px_client = PerplexityNewsClient()
             if px_client.is_available():
+                px_model = batch_params.get("perplexity_model", "sonar")
                 if status_callback:
-                    status_callback("⚡ 2/3 Perplexity AI 실시간 검색 중...")
-                px_candidates = px_client.search_news_candidates(topic, res_date, max_results=3)
+                    status_callback(f"⚡ 2/3 Perplexity AI ({px_model}) 실시간 검색 중...")
+                px_candidates = px_client.search_news_candidates(topic, res_date, max_results=3, model_name=px_model)
                 for px in px_candidates:
                     base_candidates.append(px)
                 urls_step2 = _collect_current_urls(base_candidates, current_g_urls)
                 if status_callback:
-                    status_callback(f"⚡ 2/3 Perplexity AI 탐색 완료 ({len(urls_step2)}개 참고 URL 발견)", urls=urls_step2)
+                    status_callback(f"⚡ 2/3 Perplexity AI ({px_model}) 탐색 완료 ({len(urls_step2)}개 참고 URL 발견)", urls=urls_step2)
         except Exception as px_err:
             logger.warning(f"Perplexity integration error: {px_err}")
 
@@ -816,16 +894,308 @@ Use this JSON structure:
         base_candidates = verified_candidates[:target_count]
         logger.info(f"tri_engine_discovery: 2nd stage verified & trimmed to {len(base_candidates)} candidates (target_count={target_count})")
 
+        # -----------------------------------------------------------------
+        # Stage 3: Auto-Structuring & Korean Summarization for Raw Candidates (RSS/Perplexity/Naver)
+        # -----------------------------------------------------------------
+        for cand in base_candidates:
+            if not cand.get("korean_summary") or not cand.get("detailed_summary"):
+                title_t = cand.get("title") or cand.get("korean_title") or "AI News"
+                media_t = cand.get("source_media", "News")
+                url_t = cand.get("source_url", "")
+                rss_t = cand.get("rss_description", "")
+                
+                content_to_analyze = f"Title: {title_t}\nMedia: {media_t}\nURL: {url_t}\nSummary Snippet: {rss_t}"
+                try:
+                    logger.info(f"Auto-enriching missing summary for candidate: '{title_t}'")
+                    analyzed = self.analyze_manual_article(
+                        content=content_to_analyze,
+                        url=url_t,
+                        media_name=media_t,
+                        title=title_t,
+                        primary_category=batch_params.get("primary_category", "All"),
+                        news_topic=batch_params.get("news_topic", "All")
+                    )
+                    cand["korean_title"] = analyzed.get("korean_title") or title_t
+                    cand["language"] = analyzed.get("language") or "EN"
+                    cand["primary_ai_category"] = analyzed.get("primary_ai_category") or batch_params.get("primary_category", "All")
+                    cand["news_topic"] = analyzed.get("news_topic") or batch_params.get("news_topic", "All")
+                    cand["korean_summary"] = analyzed.get("korean_summary", "")
+                    cand["detailed_summary"] = analyzed.get("detailed_summary", "")
+                    cand["key_keywords"] = analyzed.get("key_keywords", "")
+                    cand["related_companies"] = analyzed.get("related_companies", "")
+                    cand["korea_market_relevance"] = analyzed.get("korea_market_relevance", "Medium")
+                except Exception as enrich_err:
+                    logger.warning(f"Failed to auto-enrich candidate summary: {enrich_err}")
+
         self._last_grounding_urls = pooled_urls
         gemini_result["candidates"] = base_candidates
         return gemini_result
 
+    def analyze_manual_article(
+        self,
+        content: str,
+        url: str = "",
+        media_name: str = "",
+        title: str = "",
+        primary_category: str = "All",
+        news_topic: str = "AI Product Launch"
+    ) -> Dict[str, Any]:
+        """
+        Analyzes manually provided news article content/text and structures it into
+        the standardized AIKA news candidate format using Gemini JSON generation.
+        """
+        logger.info("Analyzing manually submitted news article with Gemini...")
+        
+        prompt = f"""You are an expert AI news auditor and business intelligence analyst.
+Analyze the following user-provided news article text/content and extract/structure it into a valid JSON object matching the standard AIKA news schema.
+
+[INPUT DETAILS]
+- Provided Title: {title if title else "(Extract from content)"}
+- Provided Media/Source: {media_name if media_name else "(Infer from content or default to 'User Selected Media')"}
+- Provided Source URL: {url if url else ""}
+- Primary AI Category: {primary_category}
+- News Topic: {news_topic}
+
+[ARTICLE CONTENT / TEXT]
+{content}
+
+[REQUIRED JSON SCHEMA]
+Return a SINGLE JSON object with the following fields:
+{{
+  "title": "Original English or main title of the article",
+  "korean_title": "Clear, concise Korean translation of the title",
+  "source_media": "Name of the publishing media/outlet (e.g., TechCrunch, ZDNet Korea, Official Blog, etc.)",
+  "source_url": "{url if url else ''}",
+  "published_date": "YYYY-MM-DD (extract if present in text, otherwise use today's date)",
+  "language": "EN or KO (language of original text)",
+  "primary_ai_category": "{primary_category}",
+  "news_topic": "{news_topic}",
+  "korean_summary": "1-line concise executive summary in Korean for quick briefing",
+  "detailed_summary": "10-line detailed structured summary in Korean covering background, technical/product specs, market impact, and future implications with clear line breaks (\\n)",
+  "key_keywords": "5-8 key Korean keywords separated by commas",
+  "related_companies": "Relevant company names mentioned in the text, separated by commas",
+  "korea_market_relevance": "High or Medium or Low",
+  "reference_urls": {json.dumps([url] if url else [])},
+  "audit_status": "Approved (Manual Entry)",
+  "discovery_channel": "manual"
+}}
+
+Respond ONLY with valid JSON. Do not include markdown code block syntax unless required by JSON output format.
+"""
+        try:
+            model = genai.GenerativeModel(model_name=self.structure_model_name)
+            response = model.generate_content(
+                prompt,
+                generation_config={
+                    "response_mime_type": "application/json"
+                }
+            )
+            
+            if response.text:
+                data = json.loads(response.text)
+                if isinstance(data, list) and len(data) > 0:
+                    data = data[0]
+                
+                if isinstance(data, dict):
+                    if not data.get("source_url") and url:
+                        data["source_url"] = url
+                    if not data.get("reference_urls") and url:
+                        data["reference_urls"] = [url]
+
+                    # Apply Jev (TypeSafe System One) News Classification & Filtering
+                    try:
+                        from services.typesafe_service import TypeSafeNewsClassifier
+                        jev_classifier = TypeSafeNewsClassifier()
+                        if jev_classifier.is_available():
+                            title_for_jev = str(data.get("title") or data.get("korean_title") or "")
+                            snippet_for_jev = str(data.get("detailed_summary") or data.get("korean_summary") or content or "")
+                            jev_res = jev_classifier.evaluate_article(title_for_jev, snippet_for_jev)
+
+                            data["jev_ai_prob"] = jev_res.get("ai_probability")
+                            data["jev_impact_score"] = jev_res.get("impact_score")
+
+                            if jev_res.get("status") == "success":
+                                data["primary_ai_category"] = jev_res.get("primary_category")
+                                data["korea_market_relevance"] = jev_res.get("korea_relevance")
+
+                            if not jev_res.get("is_ai_news", True):
+                                logger.info(f"Article marked as Filtered (Non-AI) by Jev: {jev_res.get('filter_reason')}")
+                                data["review_status"] = "Filtered (Non-AI)"
+                    except Exception as jev_err:
+                        logger.warning(f"Jev classification skipped in analyze_single_news_article: {jev_err}")
+
+                    return data
+
+
+            raise ValueError("Gemini returned empty or invalid response for manual article analysis.")
+        except Exception as e:
+            logger.error(f"Failed to analyze manual article with Gemini: {e}")
+            raise e
+
+    def analyze_multiple_manual_articles(
+        self,
+        raw_text_bundle: str,
+        primary_category: str = "All",
+        news_topic: str = "AI Product Launch",
+        status_callback: Optional[Any] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Processes a raw text bundle containing 1 to N news articles (without explicit dividers, separated by line spaces/paragraphs),
+        detects individual articles & URLs, fetches web content with fallback, and structures each into the standard AIKA template.
+        """
+        logger.info("Analyzing multiple manual articles bundle with Gemini...")
+        from services.url_resolver import fetch_article_text_with_fallback, follow_and_get_final_url
+
+        if status_callback:
+            status_callback("🔍 1단계: 입력된 텍스트 뭉치에서 1개~N개 기사 단락 및 URL 감지/분할 중...")
+
+        # Step 1: Segmentation prompt
+        segmentation_prompt = f"""You are a news text parser.
+The user provided a text bundle containing 1 or multiple news articles (separated by blank lines, headers, or URLs).
+Identify and separate each distinct news article. Also extract any source URL (http:// or https://) if present inside each article text.
+
+[TEXT BUNDLE]
+{raw_text_bundle}
+
+[REQUIRED JSON OUTPUT]
+Return a JSON array of objects:
+[
+  {{
+    "article_index": 1,
+    "raw_content": "Full extracted text of article 1",
+    "detected_title": "Extracted or inferred title",
+    "detected_url": "Source URL if found in text, otherwise empty string",
+    "detected_media": "Source media name if mentioned, otherwise empty string"
+  }}
+]
+Respond ONLY with valid JSON array.
+"""
+        model = genai.GenerativeModel(model_name=self.structure_model_name)
+        segments = []
+        try:
+            resp = model.generate_content(
+                segmentation_prompt,
+                generation_config={"response_mime_type": "application/json"}
+            )
+            if resp.text:
+                parsed = json.loads(resp.text)
+                if isinstance(parsed, list):
+                    segments = parsed
+                elif isinstance(parsed, dict) and "articles" in parsed:
+                    segments = parsed["articles"]
+        except Exception as seg_err:
+            logger.warning(f"Failed automatic segmentation, falling back to single article: {seg_err}")
+            segments = [{
+                "article_index": 1,
+                "raw_content": raw_text_bundle,
+                "detected_title": "",
+                "detected_url": "",
+                "detected_media": ""
+            }]
+
+        if not segments:
+            segments = [{
+                "article_index": 1,
+                "raw_content": raw_text_bundle,
+                "detected_title": "",
+                "detected_url": "",
+                "detected_media": ""
+            }]
+
+        if status_callback:
+            status_callback(f"✓ 총 {len(segments)}개의 기사 단락을 감지했습니다. 2단계 URL 웹 원문 탐색 및 우회 요약 진행 중...")
+
+        # Step 2 & 3: For each segment, attempt web fetch, then summarize into standard schema
+        results = []
+        for i, seg in enumerate(segments, 1):
+            if status_callback:
+                try:
+                    status_callback(f"[{i}/{len(segments)}] 기사 단락 {i} 분석 준비 중...")
+                except OperationCancelledException as cancel_err:
+                    cancel_err.partial_data = results
+                    raise cancel_err
+
+            raw_content = seg.get("raw_content", "").strip()
+            if not raw_content and len(raw_text_bundle.strip()) > 0:
+                raw_content = raw_text_bundle.strip()
+
+            url = seg.get("detected_url", "").strip()
+            if not url:
+                # Regex fallback for URL in text
+                urls_found = re.findall(r'https?://[^\s\)]+', raw_content)
+                if urls_found:
+                    url = urls_found[0].rstrip(".,;\"'")
+
+            title = seg.get("detected_title", "").strip()
+            media = seg.get("detected_media", "").strip()
+
+            # Attempt Web Page Fetch if URL present
+            web_text = None
+            if url:
+                if status_callback:
+                    try:
+                        status_callback(f"[{i}/{len(segments)}] URL '{url}' 웹페이지 원문 탐색 중...")
+                    except OperationCancelledException as cancel_err:
+                        cancel_err.partial_data = results
+                        raise cancel_err
+                web_text = fetch_article_text_with_fallback(url)
+                if web_text:
+                    if status_callback:
+                        try:
+                            status_callback(f"  ✅ 웹페이지 원문 획득 성공 ({len(web_text)} 자)")
+                        except OperationCancelledException as cancel_err:
+                            cancel_err.partial_data = results
+                            raise cancel_err
+                else:
+                    if status_callback:
+                        try:
+                            if len(raw_content) > 100:
+                                status_callback(f"  ℹ️ 입력된 텍스트 본문 기반으로 정밀 분석 진행 완료 ({len(raw_content)}자 활용)")
+                            else:
+                                status_callback(f"  ⚠️ URL 웹 원문 접근 차단(방화벽) → 텍스트 본문을 함께 입력하시면 100% 정밀 요약이 가능합니다.")
+                        except OperationCancelledException as cancel_err:
+                            cancel_err.partial_data = results
+                            raise cancel_err
+
+            combined_content = raw_content
+            if web_text:
+                combined_content = f"{raw_content}\n\n[FETCHED FULL WEB CONTENT]\n{web_text}"
+
+            if status_callback:
+                try:
+                    status_callback(f"[{i}/{len(segments)}] Gemini 템플릿(한글 제목, 1줄/10줄 상세 요약 등) 분석 중...")
+                except OperationCancelledException as cancel_err:
+                    cancel_err.partial_data = results
+                    raise cancel_err
+
+            try:
+                analyzed = self.analyze_manual_article(
+                    content=combined_content,
+                    url=url,
+                    media_name=media,
+                    title=title,
+                    primary_category=primary_category,
+                    news_topic=news_topic
+                )
+                results.append(analyzed)
+            except OperationCancelledException as cancel_err:
+                cancel_err.partial_data = results
+                raise cancel_err
+            except Exception as a_err:
+                logger.error(f"Error analyzing segment {i}: {a_err}")
+
+        return results
+
     def test_connection(self) -> bool:
         """
         Tests if the Gemini API key is valid by running a lightweight call.
+        Safely uses a valid Gemini model name even if discovery_model is set to Perplexity.
         """
         try:
-            model = genai.GenerativeModel(self.discovery_model_name)
+            target_model = self.structure_model_name if self.structure_model_name and "perplexity" not in self.structure_model_name else "gemini-2.5-flash"
+            if "perplexity" in target_model:
+                target_model = "gemini-2.5-flash"
+            model = genai.GenerativeModel(target_model)
             response = model.generate_content("hello")
             self.last_error = None
             return response.text is not None and len(response.text) > 0

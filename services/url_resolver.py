@@ -116,9 +116,11 @@ def is_valid_deep_link(url: str, title: str = "", media: str = "") -> bool:
         snippet_lower = clean_text[:4000].lower()
         if any(err_msg in snippet_lower for err_msg in [
             "stop the presses", "page you're looking for has gone out of circulation", 
-            "404 not found", "page not found", "web firewall security policies", "blocked request"
-        ]):
-            logger.warning(f"Link '{url}' rejected due to WAF / 404 message in body text.")
+            "404 not found", "page not found", "web firewall security policies", "blocked request",
+            "access denied", "403 forbidden", "cloudflare", "security check", "captcha",
+            "방화벽", "접근이 차단", "페이지를 찾을 수 없습니다", "service unavailable", "security policy"
+        ]) or len(clean_text) < 100:
+            logger.warning(f"Link '{url}' rejected due to WAF / 404 / Firewall block / unparsable body text.")
             return False
 
         # Stage 2: Keyword Entity Soft Pre-filter (If title provided)
@@ -303,3 +305,57 @@ Requirements:
     # Tier 4: If all tiers fail, return empty string so Auditor Agent strictly rejects unverified/broken URLs
     logger.warning(f"All resolution tiers failed to verify direct working URL for '{title[:25]}...'. Rejecting link.")
     return ""
+
+def fetch_article_text_with_fallback(url: str) -> Optional[str]:
+    """
+    Attempts to fetch the full text/content from a given news article URL.
+    Returns extracted text if HTTP 200 OK and no WAF block.
+    Returns None if WAF blocked, 403, 404, or network error occurs, triggering smooth fallback.
+    """
+    if not url or not isinstance(url, str) or not (url.startswith("http://") or url.startswith("https://")):
+        return None
+
+    clean_url = url.strip()
+
+    # Header presets with search engine Referer to bypass basic bot/WAF blocks
+    headers_variants = [
+        {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Referer": "https://www.google.com/",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "cross-site"
+        },
+        {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "ko-KR,ko;q=0.9",
+            "Referer": "https://news.naver.com/"
+        }
+    ]
+
+    for headers in headers_variants:
+        try:
+            resp = requests.get(clean_url, headers=headers, timeout=6, allow_redirects=True)
+            if resp.status_code == 200:
+                text_lower = resp.text.lower()
+                if any(b in text_lower for b in ["access denied", "cloudflare", "just a moment...", "captcha"]):
+                    continue
+
+                # Clean HTML tags and extract readable text
+                cleaned_text = re.sub(r'<script.*?>.*?</script>', '', resp.text, flags=re.DOTALL | re.IGNORECASE)
+                cleaned_text = re.sub(r'<style.*?>.*?</style>', '', cleaned_text, flags=re.DOTALL | re.IGNORECASE)
+                cleaned_text = re.sub(r'<[^>]+>', ' ', cleaned_text)
+                cleaned_text = re.sub(r'\s+', ' ', cleaned_text).strip()
+
+                if len(cleaned_text) > 100:
+                    logger.info(f"Successfully fetched web article text ({len(cleaned_text)} chars) from {clean_url}")
+                    return cleaned_text[:3000]
+        except Exception as e:
+            logger.debug(f"Fetch article text attempt failed for {clean_url}: {e}")
+            continue
+
+    return None
+

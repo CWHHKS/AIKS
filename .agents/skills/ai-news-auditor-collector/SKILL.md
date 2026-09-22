@@ -33,9 +33,9 @@ When a press release or news event is covered by multiple news media outlets sim
 
 1. **Priority 1: Target Media Outlet Match (지정/요청 언론사 우선)**
    - If the spreadsheet column `언론사/출처` or user specifies a target outlet (e.g. `인공지능신문`, `전자신문`, `ZDNet Korea`), use the verified direct URL from that specific media outlet.
-2. **Priority 2: Primary Tech Press Direct Link (IT/AI 전문지 우선)**
-   - Prioritize specialized AI & IT news media:
-     - `인공지능신문 (aitimes.kr)` / `ZDNet Korea (zdnet.co.kr)` / `전자신문 (etnews.com)` / `디지털데일리 (ddaily.co.kr)` / `블로터 (bloter.net)`
+2. **Priority 2: Primary Tech & Specialized AI Portals Direct Link (AI/IT 전문지 우선)**
+   - Prioritize specialized AI news portals and tech media:
+     - `AI타임스 (aitimes.com)` / `인공지능신문 (aitimes.kr)` / `AI News (artificialintelligence-news.com)` / `ZDNet Korea (zdnet.co.kr)` / `전자신문 (etnews.com)` / `디지털데일리 (ddaily.co.kr)` / `블로터 (bloter.net)`
 3. **Priority 3: Major Business & News Dailies (주요 일간지/경제지)**
    - Secondary coverage from national news agencies and business press:
      - `연합뉴스 (yna.co.kr)` / `조선비즈 (biz.chosun.com)` / `한국경제 (hankyung.com)` / `매일경제 (mk.co.kr)`

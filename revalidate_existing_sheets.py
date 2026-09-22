@@ -52,6 +52,7 @@ def revalidate_existing_news_sheet():
             "Duplicate": 0
         }
 
+        status_updates = []
         # Update requests
         for row_num in range(2, len(rows) + 1):
             row = rows[row_num - 1]
@@ -85,11 +86,18 @@ def revalidate_existing_news_sheet():
 
             summary_counts[new_status] = summary_counts.get(new_status, 0) + 1
 
-            # Update Review Status column in Google Sheet
+            status_updates.append([new_status])
+
+        # Batch update entire Review Status column range in 1 API call
+        if status_updates:
             try:
-                wks.update_cell(row_num, status_idx + 1, new_status)
+                # Column index to A1 notation letter (e.g. 17 -> Q)
+                col_letter = chr(ord('A') + status_idx)
+                range_str = f"{col_letter}2:{col_letter}{len(rows)}"
+                wks.update(range_str, status_updates)
+                logger.info(f"Batch updated '{range_str}' in '{client.news_sheet_name}'.")
             except Exception as u_err:
-                logger.warning(f"Failed updating row {row_num}: {u_err}")
+                logger.error(f"Failed batch updating sheet: {u_err}")
 
         logger.info("=== Phase 5 Re-validation Complete ===")
         logger.info(f"Total Processed: {len(rows)-1} rows")
