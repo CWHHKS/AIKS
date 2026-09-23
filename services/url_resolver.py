@@ -7,6 +7,12 @@ import requests
 from typing import Optional, List, Dict, Any
 from dotenv import load_dotenv
 
+try:
+    from curl_cffi import requests as cffi_requests
+    CURL_CFFI_AVAILABLE = True
+except ImportError:
+    CURL_CFFI_AVAILABLE = False
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
@@ -98,11 +104,14 @@ def is_valid_deep_link(url: str, title: str = "", media: str = "") -> bool:
     # Perform GET request and inspect status code + response text for 404 / WAF errors
     clean_text = ""
     try:
-        resp = requests.get(url, headers=get_random_headers(), timeout=5, allow_redirects=True)
+        if CURL_CFFI_AVAILABLE:
+            resp = cffi_requests.get(url, impersonate="chrome120", timeout=6, allow_redirects=True)
+        else:
+            resp = requests.get(url, headers=get_random_headers(), timeout=5, allow_redirects=True)
         
         # Ensure proper character encoding
-        if resp.encoding is None or resp.encoding.lower() in ['iso-8859-1', 'ascii']:
-            resp.encoding = resp.apparent_encoding or 'utf-8'
+        if getattr(resp, 'encoding', None) is None or getattr(resp, 'encoding', '').lower() in ['iso-8859-1', 'ascii']:
+            resp.encoding = getattr(resp, 'apparent_encoding', 'utf-8')
 
         raw_html = resp.text
         # Clean HTML scripts, styles, and tags for text auditing
@@ -170,7 +179,10 @@ def follow_and_get_final_url(url: str, title: str = "", media: str = "") -> Opti
     if not url or not url.startswith("http"):
         return None
     try:
-        resp = requests.get(url, headers=get_random_headers(), timeout=5, allow_redirects=True)
+        if CURL_CFFI_AVAILABLE:
+            resp = cffi_requests.get(url, impersonate="chrome120", timeout=6, allow_redirects=True)
+        else:
+            resp = requests.get(url, headers=get_random_headers(), timeout=5, allow_redirects=True)
         final_url = resp.url
         if is_valid_deep_link(final_url, title=title, media=media):
             return final_url
@@ -352,10 +364,15 @@ def fetch_article_text_with_fallback(url: str) -> Optional[str]:
 
     for headers in headers_variants:
         try:
-            resp = requests.get(clean_url, headers=headers, timeout=6, allow_redirects=True)
+            if CURL_CFFI_AVAILABLE:
+                resp = cffi_requests.get(clean_url, impersonate="chrome120", timeout=8, allow_redirects=True)
+            else:
+                resp = requests.get(clean_url, headers=headers, timeout=6, allow_redirects=True)
+                
             if resp.status_code == 200:
                 text_lower = resp.text.lower()
                 if any(b in text_lower for b in ["access denied", "cloudflare", "just a moment...", "captcha"]):
+                    if CURL_CFFI_AVAILABLE: break # If cffi fails, headers won't help. Move to Jina.
                     continue
 
                 # Clean HTML tags and extract readable text
@@ -367,8 +384,12 @@ def fetch_article_text_with_fallback(url: str) -> Optional[str]:
                 if len(cleaned_text) > 100:
                     logger.info(f"Successfully fetched web article text ({len(cleaned_text)} chars) from {clean_url}")
                     return cleaned_text[:3000]
+            
+            if CURL_CFFI_AVAILABLE:
+                break # Don't loop headers if we use cffi impersonation
         except Exception as e:
             logger.debug(f"Fetch article text attempt failed for {clean_url}: {e}")
+            if CURL_CFFI_AVAILABLE: break
             continue
 
     # JINA READER API FALLBACK (WAF / Cloudflare Bypass)
