@@ -98,7 +98,7 @@ def is_valid_deep_link(url: str, title: str = "", media: str = "") -> bool:
     # Perform GET request and inspect status code + response text for 404 / WAF errors
     clean_text = ""
     try:
-        resp = requests.get(url, headers=get_random_headers(), timeout=5, allow_redirects=True, stream=True)
+        resp = requests.get(url, headers=get_random_headers(), timeout=5, allow_redirects=True)
         
         # Ensure proper character encoding
         if resp.encoding is None or resp.encoding.lower() in ['iso-8859-1', 'ascii']:
@@ -170,7 +170,7 @@ def follow_and_get_final_url(url: str, title: str = "", media: str = "") -> Opti
     if not url or not url.startswith("http"):
         return None
     try:
-        resp = requests.get(url, headers=get_random_headers(), timeout=5, allow_redirects=True, stream=True)
+        resp = requests.get(url, headers=get_random_headers(), timeout=5, allow_redirects=True)
         final_url = resp.url
         if is_valid_deep_link(final_url, title=title, media=media):
             return final_url

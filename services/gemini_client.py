@@ -926,47 +926,7 @@ Use this JSON structure:
             else:
                 logger.warning(f"Rejected unverified article during Stage 2: '{title_q}' ({url_q})")
 
-        # -----------------------------------------------------------------
-        # Stage 2.5: Jev (TypeSafe) AI Classification on verified candidates
-        # -----------------------------------------------------------------
-        ai_verified_candidates = []
-        try:
-            from services.typesafe_service import TypeSafeNewsClassifier
-            jev_classifier = TypeSafeNewsClassifier()
-            jev_available = jev_classifier.is_available()
-        except Exception:
-            jev_available = False
-
-        for cand in verified_candidates:
-            if jev_available:
-                try:
-                    title_for_jev = str(cand.get("title") or cand.get("korean_title") or "")
-                    snippet_for_jev = str(cand.get("detailed_summary") or cand.get("korean_summary") or cand.get("rss_description") or "")
-                    jev_res = jev_classifier.evaluate_article(title_for_jev, snippet_for_jev, min_ai_prob_threshold=0.65)
-
-                    cand["jev_ai_prob"] = jev_res.get("ai_probability")
-                    cand["jev_impact_score"] = jev_res.get("impact_score")
-                    cand["target_bucket"] = jev_res.get("target_bucket", "국내 AI 소식")
-                    cand["article_region"] = jev_res.get("article_region", "국내")
-                    cand["article_type"] = jev_res.get("article_type", "소식")
-
-                    if jev_res.get("status") == "success":
-                        cand["primary_ai_category"] = jev_res.get("primary_category")
-                        cand["korea_market_relevance"] = jev_res.get("korea_relevance")
-
-                    pub_date = str(cand.get("published_date", ""))
-                    is_date_recent = self._is_within_48h(pub_date)
-
-                    if not jev_res.get("is_ai_news", True) or not is_date_recent:
-                        reason = jev_res.get('filter_reason') if jev_res.get('filter_reason') else f"Published date ({pub_date}) older than 48 hours"
-                        logger.info(f"tri_engine: EXCLUDED candidate (Non-AI / Outdated) by Jev: '{title_for_jev[:60]}' - {reason}")
-                        continue  # Skip non-AI articles
-                except Exception as jev_err:
-                    logger.warning(f"Jev classification skipped for candidate: {jev_err}")
-
-            ai_verified_candidates.append(cand)
-
-        base_candidates = ai_verified_candidates[:target_count]
+        base_candidates = verified_candidates[:target_count]
         logger.info(f"tri_engine_discovery: 2nd stage verified & trimmed to {len(base_candidates)} candidates (target_count={target_count})")
 
         # -----------------------------------------------------------------
