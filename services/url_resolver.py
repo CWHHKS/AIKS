@@ -126,21 +126,19 @@ def is_valid_deep_link(url: str, title: str = "", media: str = "") -> bool:
         "방화벽", "접근이 차단", "페이지를 찾을 수 없습니다", "service unavailable", "security policy"
     ]) or len(clean_text) < 100:
         
-        # --- Jina Reader API Fallback for WAF Bypass ---
-        logger.warning(f"Standard request blocked by WAF for '{url}'. Attempting Jina Reader fallback...")
-        try:
-            j_url = f"https://r.jina.ai/{url}"
-            j_resp = requests.get(j_url, headers={"Accept": "text/plain"}, timeout=8)
-            if j_resp.status_code == 200 and len(j_resp.text) > 100:
-                logger.info(f"Jina Reader bypassed WAF successfully for '{url}'.")
-                clean_text = j_resp.text
-            else:
-                logger.warning(f"Link '{url}' rejected (Jina Reader also failed).")
-                return False
-        except Exception as j_err:
-            logger.warning(f"Link '{url}' rejected (Jina Reader fallback exception: {j_err}).")
+        # --- FAST PASS FOR WAF-BLOCKED REPUTABLE MEDIA ---
+        reputable_domains = [
+            "openai.com", "blog.google", "deepmind.google", "anthropic.com",
+            "huggingface.co", "techcrunch.com", "venturebeat.com", "reuters.com", 
+            "zdnet.com", "zdnet.co.kr", "etnews.com", "theverge.com", 
+            "digitaldaily.co.kr", "yna.co.kr", "aitimes.com", "bloomberg.com"
+        ]
+        if any(dom in url_lower for dom in reputable_domains):
+            logger.info(f"Link '{url}' blocked by WAF but FAST-PASSED due to reputable domain whitelist.")
+            return True
+        else:
+            logger.warning(f"Link '{url}' rejected due to WAF / 404 / Firewall block.")
             return False
-        # -----------------------------------------------
 
         # Stage 2: Keyword Entity Soft Pre-filter (If title provided)
         if title:
