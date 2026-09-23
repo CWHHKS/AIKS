@@ -473,8 +473,8 @@ with st.sidebar:
     # 1. Primary Article Search Model Switcher Widget in Sidebar (Gemini vs Perplexity)
     curr_discovery_model = os.getenv("DISCOVERY_MODEL", "gemini-2.5-flash").strip()
     search_model_options = [
-        "gemini-3.5-flash",
         "gemini-2.5-flash",
+        "gemini-3.5-flash",
         "perplexity-sonar",
         "perplexity-sonar-pro"
     ]
