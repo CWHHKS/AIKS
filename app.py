@@ -16,13 +16,14 @@ import services.validator
 import services.batch_service
 import services.email_service
 
-importlib.reload(services.gemini_client)
-importlib.reload(services.sheets_client)
-importlib.reload(services.url_resolver)
-importlib.reload(services.audit_agent)
-importlib.reload(services.validator)
-importlib.reload(services.batch_service)
-importlib.reload(services.email_service)
+import sys
+if 'services.gemini_client' in sys.modules: importlib.reload(sys.modules['services.gemini_client'])
+if 'services.sheets_client' in sys.modules: importlib.reload(sys.modules['services.sheets_client'])
+if 'services.url_resolver' in sys.modules: importlib.reload(sys.modules['services.url_resolver'])
+if 'services.audit_agent' in sys.modules: importlib.reload(sys.modules['services.audit_agent'])
+if 'services.validator' in sys.modules: importlib.reload(sys.modules['services.validator'])
+if 'services.batch_service' in sys.modules: importlib.reload(sys.modules['services.batch_service'])
+if 'services.email_service' in sys.modules: importlib.reload(sys.modules['services.email_service'])
 
 from services.gemini_client import GeminiClient, OperationCancelledException
 from services.sheets_client import SheetsClient
