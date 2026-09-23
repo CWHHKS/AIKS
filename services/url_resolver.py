@@ -96,11 +96,10 @@ def is_valid_deep_link(url: str, title: str = "", media: str = "") -> bool:
         return False
 
     # Perform GET request and inspect status code + response text for 404 / WAF errors
+    clean_text = ""
     try:
         resp = requests.get(url, headers=get_random_headers(), timeout=5, allow_redirects=True, stream=True)
-        if resp.status_code != 200:
-            return False
-            
+        
         # Ensure proper character encoding
         if resp.encoding is None or resp.encoding.lower() in ['iso-8859-1', 'ascii']:
             resp.encoding = resp.apparent_encoding or 'utf-8'
@@ -111,17 +110,37 @@ def is_valid_deep_link(url: str, title: str = "", media: str = "") -> bool:
         cleaned_html = re.sub(r'<style[^>]*>.*?</style>', ' ', cleaned_html, flags=re.DOTALL | re.IGNORECASE)
         clean_text = re.sub(r'<[^>]+>', ' ', cleaned_html)
         clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+        
+        # Check HTTP status explicitly
+        if resp.status_code != 200:
+            clean_text = "cloudflare access denied" # Force fallback to trigger
+    except Exception as e:
+        clean_text = "cloudflare access denied" # Force fallback to trigger on connection reset
 
-        # Inspect snippet for soft 404 & WAF error messages
-        snippet_lower = clean_text[:4000].lower()
-        if any(err_msg in snippet_lower for err_msg in [
-            "stop the presses", "page you're looking for has gone out of circulation", 
-            "404 not found", "page not found", "web firewall security policies", "blocked request",
-            "access denied", "403 forbidden", "cloudflare", "security check", "captcha",
-            "방화벽", "접근이 차단", "페이지를 찾을 수 없습니다", "service unavailable", "security policy"
-        ]) or len(clean_text) < 100:
-            logger.warning(f"Link '{url}' rejected due to WAF / 404 / Firewall block / unparsable body text.")
+    # Inspect snippet for soft 404 & WAF error messages
+    snippet_lower = clean_text[:4000].lower()
+    if any(err_msg in snippet_lower for err_msg in [
+        "stop the presses", "page you're looking for has gone out of circulation", 
+        "404 not found", "page not found", "web firewall security policies", "blocked request",
+        "access denied", "403 forbidden", "cloudflare", "security check", "captcha",
+        "방화벽", "접근이 차단", "페이지를 찾을 수 없습니다", "service unavailable", "security policy"
+    ]) or len(clean_text) < 100:
+        
+        # --- Jina Reader API Fallback for WAF Bypass ---
+        logger.warning(f"Standard request blocked by WAF for '{url}'. Attempting Jina Reader fallback...")
+        try:
+            j_url = f"https://r.jina.ai/{url}"
+            j_resp = requests.get(j_url, headers={"Accept": "text/plain"}, timeout=8)
+            if j_resp.status_code == 200 and len(j_resp.text) > 100:
+                logger.info(f"Jina Reader bypassed WAF successfully for '{url}'.")
+                clean_text = j_resp.text
+            else:
+                logger.warning(f"Link '{url}' rejected (Jina Reader also failed).")
+                return False
+        except Exception as j_err:
+            logger.warning(f"Link '{url}' rejected (Jina Reader fallback exception: {j_err}).")
             return False
+        # -----------------------------------------------
 
         # Stage 2: Keyword Entity Soft Pre-filter (If title provided)
         if title:
@@ -145,9 +164,6 @@ def is_valid_deep_link(url: str, title: str = "", media: str = "") -> bool:
                 logger.warning(f"GPT Auditor check skipped/exception: {e}")
 
         return True
-    except Exception as e:
-        logger.debug(f"is_valid_deep_link exception for '{url}': {e}")
-        pass
 
     return False
 
@@ -356,6 +372,19 @@ def fetch_article_text_with_fallback(url: str) -> Optional[str]:
         except Exception as e:
             logger.debug(f"Fetch article text attempt failed for {clean_url}: {e}")
             continue
+
+    # JINA READER API FALLBACK (WAF / Cloudflare Bypass)
+    # If all standard request attempts fail or hit Cloudflare, use Jina Reader API to fetch content
+    try:
+        jina_url = f"https://r.jina.ai/{clean_url}"
+        logger.info(f"Trying Jina Reader API fallback for blocked URL: {clean_url}")
+        jina_resp = requests.get(jina_url, headers={"Accept": "text/plain"}, timeout=10)
+        
+        if jina_resp.status_code == 200 and len(jina_resp.text) > 50:
+            logger.info(f"Successfully bypassed WAF using Jina Reader API for {clean_url}")
+            return jina_resp.text[:3000]
+    except Exception as e:
+        logger.debug(f"Jina Reader fallback failed for {clean_url}: {e}")
 
     return None
 
